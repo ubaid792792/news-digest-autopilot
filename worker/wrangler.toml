@@ -1,0 +1,24 @@
+name = "news-digest-autopilot"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "news-digest-db"
+database_id = "c72212bd-b196-4c18-8eb8-c0aee8bc55ef"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+GH_REPO = "ubaid792792/news-digest-autopilot"
+GH_WORKFLOW = "digest.yml"
+GH_REF = "main"
+FB_APP_ID = "2234410997120069"
+
+[observability]
+enabled = true

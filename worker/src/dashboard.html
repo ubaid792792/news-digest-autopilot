@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>News Digest</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --text:#16181d; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309; --soft:#f3f4f6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#181b22; --text:#eceef2; --muted:#9aa1ad; --line:#2a2f3a; --soft:#20242d; --accent:#4f8cff; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--line); }
+  .bar { max-width:980px; margin:0 auto; padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .mark { width:36px; height:36px; border-radius:10px; background:var(--accent); color:#fff; display:grid; place-items:center; font-weight:800; font-size:14px; flex:none; }
+  .title { font-weight:700; } .sub { color:var(--muted); font-size:12.5px; }
+  .grow { flex:1; min-width:120px; }
+  nav { max-width:980px; margin:0 auto; padding:0 10px; display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; }
+  nav button { background:none; border:0; border-bottom:2px solid transparent; color:var(--muted); padding:9px 10px; font:inherit; font-size:14px; cursor:pointer; white-space:nowrap; }
+  nav button.on { color:var(--text); border-color:var(--accent); font-weight:600; }
+  main { max-width:980px; margin:0 auto; padding:16px; }
+  section { display:none; } section.on { display:block; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+  h2 { font-size:17px; margin:0 0 4px; } h3 { font-size:15px; margin:16px 0 6px; }
+  p.hint, .hint { color:var(--muted); font-size:13px; margin:2px 0 10px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input[type=text], input[type=number], input[type=password], input[type=time], input[type=email], select, textarea {
+    width:100%; padding:9px 11px; border-radius:9px; border:1px solid var(--line); background:transparent; color:var(--text); font:inherit; font-size:14.5px; }
+  select option { background:var(--card); color:var(--text); }
+  textarea { min-height:110px; resize:vertical; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; } .row > * { flex:1; min-width:150px; }
+  .check { display:flex; align-items:center; gap:8px; margin:10px 0 0; color:var(--text); font-size:14px; }
+  .check input { width:18px; height:18px; }
+  button.btn { padding:9px 14px; border-radius:9px; border:1px solid var(--line); background:var(--card); color:var(--text); font:inherit; font-size:14px; font-weight:600; cursor:pointer; white-space:nowrap; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  button.small { padding:5px 9px; font-size:12.5px; font-weight:500; }
+  button:disabled { opacity:.55; cursor:default; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; background:var(--soft); color:var(--muted); }
+  .pill.ok { background:rgba(22,163,74,.12); color:var(--ok); } .pill.bad { background:rgba(220,38,38,.12); color:var(--bad); }
+  .pill.warn { background:rgba(180,83,9,.12); color:var(--warn); } .pill.blue { background:rgba(37,99,235,.12); color:var(--accent); }
+  .switch { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-size:14px; font-weight:600; }
+  .switch .knob { width:42px; height:24px; border-radius:999px; background:var(--line); position:relative; transition:.15s; flex:none; }
+  .switch .knob::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:.15s; }
+  .switch.on .knob { background:var(--ok); } .switch.on .knob::after { left:21px; }
+  .list { border-top:1px solid var(--line); }
+  .item { display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .item .main { flex:1; min-width:200px; } .item .name { font-weight:600; word-break:break-word; }
+  .item .meta { color:var(--muted); font-size:12.5px; word-break:break-all; }
+  .item .err { color:var(--bad); font-size:12.5px; }
+  .kind { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--muted); }
+  .digest { cursor:pointer; } .digest:hover .name { color:var(--accent); }
+  #viewer { margin-top:14px; } #viewer .frame { background:#eef0f3; border-radius:12px; padding:8px; overflow:auto; }
+  .times { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:8px; margin-top:6px; }
+  .times div { display:flex; flex-direction:column; } .times span { font-size:12px; color:var(--muted); }
+  .topic { display:grid; grid-template-columns:auto 56px 1fr; gap:8px; align-items:start; padding:10px 0; border-bottom:1px solid var(--line); }
+  .topic .ord { display:flex; flex-direction:column; gap:4px; }
+  .topic .fields { display:flex; flex-direction:column; gap:6px; }
+  .topic textarea { min-height:44px; font-size:13px; }
+  .topic .tools { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .kv { display:grid; grid-template-columns:150px 1fr; gap:6px 12px; font-size:14px; } .kv div:nth-child(odd) { color:var(--muted); }
+  #toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:#16181d; color:#fff; padding:10px 16px; border-radius:10px; font-size:14px; max-width:92vw; display:none; z-index:20; }
+  #toast.bad { background:var(--bad); }
+  pre.log { white-space:pre-wrap; font-size:12px; background:var(--soft); padding:10px; border-radius:8px; max-height:300px; overflow:auto; }
+  a { color:var(--accent); }
+  @media (max-width:560px) { .kv { grid-template-columns:1fr; } .kv div:nth-child(odd) { margin-top:6px; } .topic { grid-template-columns:auto 1fr; } .topic .emoji { grid-column:2; } .topic .fields { grid-column:1 / -1; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="mark">ND</div>
+    <div class="grow"><div class="title">News Digest</div><div class="sub" id="nextLine">Loading…</div></div>
+    <div class="switch" id="power" title="Turn scheduled digests on or off"><span class="knob"></span><span id="powerLabel">Off</span></div>
+    <button class="btn" id="previewBtn" title="Collect and build a digest without emailing it">Preview</button>
+    <button class="btn primary" id="runBtn" title="Collect now and email the digest">Run now</button>
+  </div>
+  <nav id="tabs">
+    <button data-tab="digests" class="on">Digests</button>
+    <button data-tab="sources">Sources</button>
+    <button data-tab="topics">Topics</button>
+    <button data-tab="writing">Writing</button>
+    <button data-tab="schedule">Schedule</button>
+    <button data-tab="delivery">Delivery</button>
+    <button data-tab="connections">Connections</button>
+    <button data-tab="account">Account</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Digests -->
+  <section id="tab-digests" class="on">
+    <div class="card">
+      <h2>Digests</h2>
+      <p class="hint">Every delivery appears here. Tap one to read it. Emails link to the same page.</p>
+      <div class="list" id="digestList"></div>
+      <div id="viewer"></div>
+    </div>
+  </section>
+
+  <!-- Sources -->
+  <section id="tab-sources">
+    <div class="card">
+      <h2>Add a source</h2>
+      <div class="row">
+        <div style="flex:0 0 190px"><label for="srcKind">Type</label>
+          <select id="srcKind">
+            <option value="rss">Website / RSS feed</option>
+            <option value="x">X (Twitter) profile</option>
+            <option value="instagram">Instagram profile</option>
+            <option value="facebook">Facebook page (FetchRSS link)</option>
+          </select></div>
+        <div style="flex:3"><label for="srcInput">Link or @handle</label><input type="text" id="srcInput" placeholder="https://x.com/dawn_com"></div>
+        <div><label for="srcName">Name (optional)</label><input type="text" id="srcName" placeholder="Dawn"></div>
+        <div style="flex:0 0 auto"><button class="btn primary" id="srcAdd">Add</button></div>
+      </div>
+      <p class="hint" id="srcHelp"></p>
+    </div>
+    <div class="card"><h2>Your sources</h2><p class="hint">Turn a source off to pause it without deleting it. Status shows what the last run found.</p><div id="sourceList"></div></div>
+  </section>
+
+  <!-- Topics -->
+  <section id="tab-topics">
+    <div class="card">
+      <h2>Topic headings</h2>
+      <p class="hint">Stories are sorted under these headings, in this order. The description tells the AI what belongs there.
+        Anything that fits none goes under <b id="otherName">Other News</b> (rename it in Writing).</p>
+      <div id="topicList"></div>
+      <h3>Add a heading</h3>
+      <div class="row">
+        <div style="flex:0 0 70px"><label for="tEmoji">Emoji</label><input type="text" id="tEmoji" maxlength="8" placeholder="📰"></div>
+        <div><label for="tName">Heading</label><input type="text" id="tName" placeholder="Local News"></div>
+        <div style="flex:2"><label for="tDesc">What belongs here</label><input type="text" id="tDesc" placeholder="City news from Karachi and Lahore"></div>
+        <div style="flex:0 0 auto"><button class="btn primary" id="tAdd">Add</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Writing -->
+  <section id="tab-writing">
+    <div class="card">
+      <h2>Format</h2>
+      <div class="row">
+        <div><label for="digest_title">Digest title</label><input type="text" data-setting="digest_title" id="digest_title"></div>
+        <div><label for="language">Language</label><input type="text" data-setting="language" id="language"></div>
+      </div>
+      <div class="row">
+        <div><label for="item_style">Each story as</label><select data-setting="item_style" id="item_style"><option value="paragraph">Short paragraph</option><option value="bullets">Bullet points</option></select></div>
+        <div><label for="words_per_story">Words per story (about)</label><input type="number" min="20" max="300" data-setting="words_per_story" id="words_per_story"></div>
+        <div><label for="story_order">Order inside a topic</label><select data-setting="story_order" id="story_order"><option value="sources">Most-reported first</option><option value="newest">Newest first</option></select></div>
+        <div><label for="other_topic_name">Heading for unsorted stories</label><input type="text" data-setting="other_topic_name" id="other_topic_name"></div>
+      </div>
+      <label class="check"><input type="checkbox" data-setting="show_time"> Show the time of each story</label>
+      <label class="check"><input type="checkbox" data-setting="show_sources"> Show source names and links</label>
+      <label class="check"><input type="checkbox" data-setting="show_emoji"> Show topic emojis</label>
+    </div>
+    <div class="card">
+      <h2>Writing prompt</h2>
+      <p class="hint">Your instructions for how stories are written. These rules always apply on top and can't be switched off:
+        keep every fact (names, numbers, dates, places, quotes, who said what), add nothing, merge the same story from several
+        sources into one, translate to the language above, shorten only by removing repetition and filler.</p>
+      <textarea data-setting="writing_prompt" id="writing_prompt" style="min-height:160px"></textarea>
+      <h3>Extra sorting instructions (optional)</h3>
+      <p class="hint">For example: "Put anything about Karachi under Local News even if it is about crime."</p>
+      <textarea data-setting="sort_prompt" id="sort_prompt"></textarea>
+      <div class="actions"><button class="btn primary" data-save="writing">Save</button><button class="btn" id="resetPrompt">Reset prompt to default</button></div>
+    </div>
+  </section>
+
+  <!-- Schedule -->
+  <section id="tab-schedule">
+    <div class="card">
+      <h2>Delivery times</h2>
+      <p class="hint">Collection starts a little before each time so the digest is ready on time. Digests run only while the switch at the top is on.</p>
+      <div class="row">
+        <div style="flex:0 0 170px"><label for="slotCount">Deliveries per day</label><input type="number" min="1" max="24" id="slotCount"></div>
+        <div><label for="timezone">Time zone</label><input type="text" data-setting="timezone" id="timezone" placeholder="Asia/Karachi"></div>
+      </div>
+      <div class="times" id="slotTimes"></div>
+      <h3>Which posts each digest covers</h3>
+      <div class="row">
+        <div><label for="lookback_mode">Window</label><select data-setting="lookback_mode" id="lookback_mode">
+          <option value="since_last">Everything since the previous digest (no gaps, no repeats)</option>
+          <option value="fixed">The last X hours before each delivery</option></select></div>
+        <div style="flex:0 0 170px"><label for="lookback_hours">X hours</label><input type="number" min="1" max="168" step="0.5" data-setting="lookback_hours" id="lookback_hours"></div>
+        <div style="flex:0 0 190px"><label for="lead_minutes">Start collecting (min before)</label><input type="number" min="10" max="120" data-setting="lead_minutes" id="lead_minutes"></div>
+      </div>
+      <p class="hint">With "since the previous digest", X hours is used only for the first digest or after a long pause.</p>
+      <div class="actions"><button class="btn primary" data-save="schedule">Save schedule</button></div>
+    </div>
+    <div class="card">
+      <h2>Collection</h2>
+      <div class="row">
+        <div><label for="max_posts_per_source">Max posts per source per run</label><input type="number" min="5" max="200" data-setting="max_posts_per_source" id="max_posts_per_source"></div>
+        <div><label for="stories_per_call">Stories per AI request</label><input type="number" min="1" max="20" data-setting="stories_per_call" id="stories_per_call"></div>
+      </div>
+      <label class="check"><input type="checkbox" data-setting="skip_retweets"> Skip reposts (retweets) on X</label>
+      <label class="check"><input type="checkbox" data-setting="include_replies"> Include the account's replies on X</label>
+      <label class="check"><input type="checkbox" data-setting="fetch_full_articles"> Read the full article for website items (longer digest, more AI use)</label>
+      <h3>Videos</h3>
+      <label class="check"><input type="checkbox" data-setting="transcribe_videos"> Transcribe videos (X videos, Instagram videos when Instagram allows)</label>
+      <div class="row">
+        <div><label for="whisper_model">Transcription accuracy</label><select data-setting="whisper_model" id="whisper_model">
+          <option value="tiny">Fastest</option><option value="base">Fast</option><option value="small">Balanced</option><option value="medium">Most accurate (slow)</option></select></div>
+        <div><label for="max_video_minutes_each">Skip videos longer than (min)</label><input type="number" min="1" max="60" data-setting="max_video_minutes_each" id="max_video_minutes_each"></div>
+        <div><label for="max_video_minutes_per_run">Max video minutes per run</label><input type="number" min="0" max="300" data-setting="max_video_minutes_per_run" id="max_video_minutes_per_run"></div>
+      </div>
+      <div class="actions"><button class="btn primary" data-save="collection">Save</button></div>
+    </div>
+  </section>
+
+  <!-- Delivery -->
+  <section id="tab-delivery">
+    <div class="card">
+      <h2>Email</h2>
+      <p class="hint">Sent from your Gmail through Composio. Every digest is also on the Digests tab and at the link in the email.</p>
+      <label class="check"><input type="checkbox" data-setting="email_enabled"> Email each digest</label>
+      <label for="email_recipients">Send to (separate several with commas)</label>
+      <input type="text" data-setting="email_recipients" id="email_recipients" placeholder="you@gmail.com">
+      <label for="email_subject">Subject</label>
+      <input type="text" data-setting="email_subject" id="email_subject">
+      <p class="hint">Use {title}, {date}, {time} and {stories} in the subject.</p>
+      <label class="check"><input type="checkbox" data-setting="email_when_empty"> Email even when there is no new news</label>
+      <div class="actions"><button class="btn primary" data-save="delivery">Save</button><button class="btn" id="testEmail">Send test email</button></div>
+    </div>
+  </section>
+
+  <!-- Connections -->
+  <section id="tab-connections">
+    <div class="card">
+      <h2>X (Twitter) reading <span class="pill" id="xPill"></span></h2>
+      <p class="hint" id="xStatus"></p>
+      <p class="hint">Use a spare X account, never your main one. In a browser where that account is logged in on x.com, open
+        Developer tools &rarr; Application (Storage) &rarr; Cookies &rarr; https://x.com and copy the values of <b>auth_token</b> and <b>ct0</b>.
+        They are stored on the server and never shown again. Replace them if X logs the account out.</p>
+      <div class="row">
+        <div><label for="xAuth">auth_token</label><input type="password" id="xAuth" autocomplete="off"></div>
+        <div><label for="xCt0">ct0</label><input type="password" id="xCt0" autocomplete="off"></div>
+      </div>
+      <div class="actions"><button class="btn primary" id="xSave">Save X cookies</button><button class="btn danger" id="xDelete">Remove</button></div>
+    </div>
+    <div class="card">
+      <h2>Instagram reading <span class="pill" id="igPill"></span></h2>
+      <p class="hint" id="igStatus"></p>
+      <p class="hint">Instagram profiles are read through Meta's official Business Discovery (public Business/Creator accounts only).
+        Reels whose video Instagram hides (licensed music or downloads turned off) use the caption only.</p>
+      <div class="row">
+        <div><label for="fbSecret">Facebook app secret (only to reconnect)</label><input type="password" id="fbSecret" autocomplete="off"></div>
+        <div style="flex:0 0 auto"><button class="btn" id="fbSecretSave">Save secret</button></div>
+        <div style="flex:0 0 auto"><a class="btn" href="/oauth/facebook/start" style="display:inline-block;text-decoration:none">Reconnect Instagram</a></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>System</h2>
+      <div class="kv" id="sysInfo"></div>
+    </div>
+  </section>
+
+  <!-- Account -->
+  <section id="tab-account">
+    <div class="card">
+      <h2>Change login code</h2>
+      <div class="row">
+        <div><label for="pwCur">Current code</label><input type="password" id="pwCur" autocomplete="current-password"></div>
+        <div><label for="pwNew">New code (6+ characters)</label><input type="password" id="pwNew" autocomplete="new-password"></div>
+      </div>
+      <div class="actions"><button class="btn primary" id="pwSave">Change code</button><button class="btn" id="logout">Log out</button></div>
+    </div>
+    <div class="card">
+      <h2>Run history</h2>
+      <p class="hint">Each collection run on GitHub Actions. Open a run for its full log.</p>
+      <div class="list" id="runList"></div>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" })[c]);
+let S = null;
+let openDigest = null;
+
+function toast(msg, bad = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = bad ? "bad" : ""; t.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = "none"), bad ? 6000 : 2800);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { method: opts.method || (opts.body ? "POST" : "GET"), headers: { "content-type": "application/json" },
+    body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 401) { location.reload(); throw new Error("Please log in again"); }
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+async function act(btn, fn, okMsg) {
+  if (btn) btn.disabled = true;
+  try { const out = await fn(); if (okMsg) toast(typeof okMsg === "function" ? okMsg(out) : okMsg); await load(); return out; }
+  catch (e) { toast(e.message, true); }
+  finally { if (btn) btn.disabled = false; }
+}
+
+const tz = () => S?.settings.timezone || "UTC";
+function when(iso, opts = {}) {
+  if (!iso) return "";
+  try { return new Intl.DateTimeFormat("en-GB", { timeZone: tz(), day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, ...opts }).format(new Date(iso)); }
+  catch { return iso; }
+}
+function ago(iso) {
+  if (!iso) return "never";
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (m < 1) return "just now"; if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60); return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+}
+
+// ---------- tabs ----------
+$("#tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]"); if (!b) return;
+  $$("#tabs button").forEach((x) => x.classList.toggle("on", x === b));
+  $$("main section").forEach((s) => s.classList.toggle("on", s.id === `tab-${b.dataset.tab}`));
+  try { localStorage.setItem("nd_tab", b.dataset.tab); } catch {}
+});
+try { const t = localStorage.getItem("nd_tab"); if (t) $(`#tabs button[data-tab="${t}"]`)?.click(); } catch {}
+
+// ---------- load + render ----------
+async function load() {
+  S = await api("/api/state");
+  renderHeader(); renderDigests(); renderSources(); renderTopics(); renderSettings(); renderSlots(); renderConnections(); renderRuns();
+  clearTimeout(load.t);
+  if (S.digests.some((d) => d.status === "collecting")) load.t = setTimeout(() => load().catch(() => {}), 20000);
+}
+
+function renderHeader() {
+  const on = S.settings.enabled;
+  $("#power").classList.toggle("on", on); $("#powerLabel").textContent = on ? "On" : "Off";
+  const busy = S.digests.find((d) => d.status === "collecting");
+  let line = on ? (S.next_slots[0] ? `Next digest ${when(S.next_slots[0])}` : "No delivery times set") : "Scheduled digests are off";
+  if (busy) line = `Collecting now (${busy.kind})… ` + line;
+  $("#nextLine").textContent = line;
+  $("#runBtn").disabled = $("#previewBtn").disabled = Boolean(busy);
+}
+
+const STATUS = {
+  collecting: ["Collecting", "blue"], ready: ["Ready", "ok"], sent: ["Emailed", "ok"], email_failed: ["Email failed", "bad"],
+  failed: ["Failed", "bad"], skipped: ["Nothing new", ""],
+};
+function renderDigests() {
+  const list = $("#digestList");
+  if (!S.digests.length) { list.innerHTML = `<p class="hint" style="padding:10px 0">No digests yet. Add sources, then press Preview or Run now.</p>`; return; }
+  list.innerHTML = S.digests.map((d) => {
+    const [label, cls] = STATUS[d.status] || [d.status, ""];
+    const kind = d.kind === "scheduled" ? `Scheduled ${d.slot_time || ""}` : d.kind === "manual" ? "Run now" : "Preview";
+    const counts = d.story_count != null ? `${d.story_count} stories · ${d.item_count} posts` : "";
+    return `<div class="item digest" data-id="${esc(d.id)}"><div class="main">
+      <div class="name">${esc(when(d.slot_at))} <span class="kind">&nbsp;${esc(kind)}</span></div>
+      <div class="meta">${esc(counts)}${counts ? " · " : ""}posts from ${esc(when(d.window_start))} to ${esc(when(d.window_end))}</div>
+      ${d.error && d.status !== "skipped" ? `<div class="err">${esc(d.error)}</div>` : ""}</div>
+      <span class="pill ${cls}">${esc(label)}</span></div>`;
+  }).join("");
+  if (openDigest && !S.digests.some((d) => d.id === openDigest)) { openDigest = null; $("#viewer").innerHTML = ""; }
+}
+
+$("#digestList").addEventListener("click", async (e) => {
+  const row = e.target.closest(".digest"); if (!row) return;
+  openDigest = row.dataset.id;
+  try {
+    const d = await api(`/api/digests/${openDigest}`);
+    const canSend = d.digest.status !== "collecting" && d.digest.status !== "failed";
+    $("#viewer").innerHTML = `<div class="actions" style="margin:0 0 10px">
+      <a class="btn" href="${esc(d.link)}" target="_blank" rel="noopener" style="text-decoration:none">Open full page</a>
+      <button class="btn" id="vCopy">Copy link</button>
+      ${canSend ? `<button class="btn" id="vSend">Email it now</button>` : ""}
+      <button class="btn danger" id="vDel">Delete</button></div><div class="frame">${d.html}</div>`;
+    $("#vCopy").onclick = () => navigator.clipboard.writeText(location.origin + d.link).then(() => toast("Link copied"), () => toast("Copy failed", true));
+    if (canSend) $("#vSend").onclick = (ev) => act(ev.target, () => api(`/api/digests/${openDigest}/send`, { method: "POST", body: {} }), (o) => o.skipped ? "Nothing to send" : `Emailed (${o.parts} part${o.parts > 1 ? "s" : ""})`);
+    $("#vDel").onclick = (ev) => { if (confirm("Delete this digest?")) act(ev.target, () => api(`/api/digests/${openDigest}`, { method: "DELETE" }), "Deleted"); };
+    $("#viewer").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) { toast(err.message, true); }
+});
+
+const KIND = { rss: "Website / RSS", facebook: "Facebook (FetchRSS)", x: "X profiles", instagram: "Instagram profiles" };
+const HELP = {
+  rss: "Paste a news website (its RSS feed is found automatically) or an RSS link.",
+  x: "Paste an X profile link like https://x.com/dawn_com or just @dawn_com. Needs the spare-account cookies in Connections.",
+  instagram: "Paste an Instagram profile link like https://www.instagram.com/dawn.today/. Only public Business/Creator accounts can be read.",
+  facebook: "Facebook can't be read directly. On fetchrss.com, create a feed from the Facebook page link, copy its RSS link and paste it here.",
+};
+$("#srcKind").addEventListener("change", () => ($("#srcHelp").textContent = HELP[$("#srcKind").value]));
+$("#srcHelp").textContent = HELP.rss;
+
+function renderSources() {
+  const groups = Object.keys(KIND).map((k) => {
+    const rows = S.sources.filter((s) => s.kind === k);
+    if (!rows.length) return "";
+    return `<h3>${KIND[k]} <span class="pill">${rows.length}</span></h3><div class="list">${rows.map((s) => {
+      const status = s.last_fetched_at ? (s.last_error ? `<div class="err">${esc(s.last_error)}</div>` : `<div class="meta">${s.last_count} new posts · ${ago(s.last_fetched_at)}</div>`) : `<div class="meta">Not checked yet</div>`;
+      return `<div class="item" data-id="${s.id}"><div class="main"><div class="name">${esc(s.name)}</div>
+        <div class="meta"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></div>${status}</div>
+        <label class="check" style="margin:0"><input type="checkbox" data-act="toggle" ${s.enabled ? "checked" : ""}> On</label>
+        <button class="btn small" data-act="test">Test</button><button class="btn small" data-act="edit">Edit</button>
+        <button class="btn small danger" data-act="del">Delete</button></div>`;
+    }).join("")}</div>`;
+  }).join("");
+  $("#sourceList").innerHTML = groups || `<p class="hint">No sources yet.</p>`;
+}
+
+$("#srcAdd").addEventListener("click", (e) => act(e.target, async () => {
+  const out = await api("/api/sources", { body: { kind: $("#srcKind").value, input: $("#srcInput").value, name: $("#srcName").value } });
+  $("#srcInput").value = ""; $("#srcName").value = ""; return out;
+}, (o) => `Added ${o.source.name}`));
+$("#srcInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#srcAdd").click(); });
+
+$("#sourceList").addEventListener("click", async (e) => {
+  const el = e.target.closest("[data-act]"); if (!el) return;
+  const id = el.closest(".item").dataset.id;
+  const src = S.sources.find((s) => String(s.id) === id);
+  const a = el.dataset.act;
+  if (a === "toggle") return act(null, () => api(`/api/sources/${id}`, { method: "PATCH", body: { enabled: el.checked } }), el.checked ? "Source on" : "Source paused");
+  if (a === "del") { if (confirm(`Delete ${src.name}?`)) act(el, () => api(`/api/sources/${id}`, { method: "DELETE" }), "Deleted"); return; }
+  if (a === "test") {
+    el.disabled = true;
+    try { const r = await api(`/api/sources/${id}/test`, { method: "POST", body: {} }); toast(r.message, !r.ok); } catch (err) { toast(err.message, true); }
+    el.disabled = false; return;
+  }
+  if (a === "edit") {
+    const name = prompt("Name", src.name); if (name === null) return;
+    const link = prompt("Link or @handle", src.url); if (link === null) return;
+    const patch = { name }; if (link.trim() && link.trim() !== src.url) patch.input = link.trim();
+    act(el, () => api(`/api/sources/${id}`, { method: "PATCH", body: patch }), "Saved");
+  }
+});
+
+function renderTopics() {
+  $("#otherName").textContent = S.settings.other_topic_name;
+  $("#topicList").innerHTML = S.topics.map((t, i) => `<div class="topic" data-id="${t.id}">
+    <div class="ord"><button class="btn small" data-act="up" ${i ? "" : "disabled"} title="Move up">&uarr;</button><button class="btn small" data-act="down" ${i < S.topics.length - 1 ? "" : "disabled"} title="Move down">&darr;</button></div>
+    <input type="text" class="emoji" data-f="emoji" value="${esc(t.emoji)}" maxlength="8" aria-label="Emoji">
+    <div class="fields"><input type="text" data-f="name" value="${esc(t.name)}" aria-label="Heading">
+      <textarea data-f="description" aria-label="What belongs here" placeholder="What belongs here">${esc(t.description)}</textarea>
+      <div class="tools"><label class="check" style="margin:0"><input type="checkbox" data-f="enabled" ${t.enabled ? "checked" : ""}> Used</label>
+        <button class="btn small primary" data-act="save">Save</button><button class="btn small danger" data-act="del">Delete</button></div></div></div>`).join("")
+    || `<p class="hint">No headings yet. Without headings everything goes under ${esc(S.settings.other_topic_name)}.</p>`;
+}
+
+$("#topicList").addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]"); if (!el) return;
+  const row = el.closest(".topic"); const id = row.dataset.id; const a = el.dataset.act;
+  if (a === "save") {
+    const f = (n) => row.querySelector(`[data-f="${n}"]`);
+    return act(el, () => api(`/api/topics/${id}`, { method: "PATCH", body: { name: f("name").value, description: f("description").value, emoji: f("emoji").value, enabled: f("enabled").checked } }), "Topic saved");
+  }
+  if (a === "del") { if (confirm("Delete this heading?")) act(el, () => api(`/api/topics/${id}`, { method: "DELETE" }), "Deleted"); return; }
+  const ids = S.topics.map((t) => String(t.id)); const i = ids.indexOf(id); const j = a === "up" ? i - 1 : i + 1;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  act(el, () => api("/api/topics/order", { body: { ids } }));
+});
+$("#tAdd").addEventListener("click", (e) => act(e.target, async () => {
+  const out = await api("/api/topics", { body: { name: $("#tName").value, description: $("#tDesc").value, emoji: $("#tEmoji").value } });
+  $("#tName").value = $("#tDesc").value = $("#tEmoji").value = ""; return out;
+}, "Heading added"));
+
+// ---------- settings forms ----------
+// Fields the user is editing keep their text when the page refreshes its data.
+document.addEventListener("input", (e) => { if (e.target.dataset?.setting) e.target.dataset.dirty = "1"; if (e.target.closest?.("#slotTimes")) slotsDirty = true; });
+let slotsDirty = false;
+function renderSettings() {
+  for (const el of $$("[data-setting]")) {
+    if (el === document.activeElement || el.dataset.dirty) continue;
+    const v = S.settings[el.dataset.setting];
+    if (el.type === "checkbox") el.checked = Boolean(v);
+    else el.value = Array.isArray(v) ? v.join(", ") : v ?? "";
+  }
+}
+function collect(section) {
+  const out = {};
+  for (const el of $$(`#tab-${section} [data-setting]`)) out[el.dataset.setting] = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) : el.value;
+  return out;
+}
+$$("[data-save]").forEach((b) => b.addEventListener("click", () => {
+  const sec = { writing: "writing", schedule: "schedule", collection: "schedule", delivery: "delivery" }[b.dataset.save];
+  const patch = collect(sec);
+  if (sec === "schedule") patch.slots = $$("#slotTimes input").map((i) => i.value).filter(Boolean);
+  act(b, async () => {
+    const out = await api("/api/settings", { body: patch });
+    $$(`#tab-${sec} [data-setting]`).forEach((el) => delete el.dataset.dirty);
+    if (sec === "schedule") slotsDirty = false;
+    return out;
+  }, "Saved");
+}));
+$("#resetPrompt").addEventListener("click", () => { $("#writing_prompt").value = DEFAULT_PROMPT_TEXT; $("#writing_prompt").dataset.dirty = "1"; toast("Default prompt restored. Press Save to keep it."); });
+const DEFAULT_PROMPT_TEXT = "Write like a wire-service editor: neutral, factual and plain. Start with the most important fact. Use active voice. Write numbers as digits. Write Pakistani currency as PKR (for example PKR 285,000). Attribute claims to the outlet or person who made them (for example \"according to Dawn\"). Do not use emojis, hashtags or exclamation marks.";
+
+// Delivery times: one time box per delivery.
+function renderSlots(count) {
+  if (count == null && (slotsDirty || document.activeElement === $("#slotCount"))) return;
+  const current = $$("#slotTimes input").map((i) => i.value).filter(Boolean);
+  const base = count == null ? S.settings.slots : current;
+  const n = Math.max(1, count ?? base.length);
+  $("#slotCount").value = n;
+  const defaults = Array.from({ length: n }, (_, i) => base[i] || `${String(Math.min(23, Math.round(7 + (i * 15) / Math.max(1, n - 1)))).padStart(2, "0")}:00`);
+  $("#slotTimes").innerHTML = defaults.map((t, i) => `<div><span>Delivery ${i + 1}</span><input type="time" value="${esc(t)}"></div>`).join("");
+}
+$("#slotCount").addEventListener("input", () => {
+  const n = Math.max(1, Math.min(24, Number($("#slotCount").value) || 1)); slotsDirty = true; renderSlots(n);
+});
+
+function renderConnections() {
+  const c = S.config;
+  const xs = c.x_status;
+  const xPill = $("#xPill");
+  if (!c.x_cookies) { xPill.className = "pill warn"; xPill.textContent = "Not set"; }
+  else if (xs && xs.ok === false) { xPill.className = "pill bad"; xPill.textContent = "Problem"; }
+  else if (xs && xs.ok) { xPill.className = "pill ok"; xPill.textContent = "Working"; }
+  else { xPill.className = "pill blue"; xPill.textContent = "Saved"; }
+  $("#xStatus").textContent = xs ? `${xs.message || ""}${xs.at ? ` (${ago(xs.at)})` : ""}` : (c.x_cookies ? "" : "X profiles are skipped until cookies are saved.");
+  const ig = c.instagram;
+  $("#igPill").className = ig ? "pill ok" : "pill warn"; $("#igPill").textContent = ig ? "Connected" : "Not connected";
+  $("#igStatus").textContent = ig ? `Reading through @${ig.username} (${ig.page || "Facebook Page"}).` : "Not connected. Save the Facebook app secret, then press Reconnect Instagram.";
+  const u = S.usage || {};
+  $("#sysInfo").innerHTML = [
+    ["Collection runs", c.github ? `GitHub Actions (<a href="https://github.com/${esc(c.repo)}/actions" target="_blank" rel="noopener">${esc(c.repo)}</a>)` : `<span style="color:var(--bad)">GitHub not configured</span>`],
+    ["Email", c.composio ? "Gmail via Composio" : `<span style="color:var(--bad)">Composio not configured</span>`],
+    ["Emails today", u.emails || 0],
+    ["AI requests today", (u.ai_calls || 0) + (u.workers_ai_calls ? ` (+${u.workers_ai_calls} Cloudflare AI)` : "")],
+    ["Server time", `${when(S.now)} (${esc(tz())})`],
+  ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join("");
+}
+
+function renderRuns() {
+  $("#runList").innerHTML = S.runs.map((r) => {
+    const cls = r.status === "done" ? "ok" : ["error", "timeout"].includes(r.status) ? "bad" : "blue";
+    return `<div class="item"><div class="main"><div class="name">${esc(when(r.started_at))} <span class="kind">&nbsp;${esc(r.mode || "")} · ${esc(r.trigger || "")}</span></div>
+      <div class="meta">${esc(r.summary || "")}</div></div>
+      ${r.gh_run_url ? `<a class="btn small" href="${esc(r.gh_run_url)}" target="_blank" rel="noopener" style="text-decoration:none">Log</a>` : ""}
+      <span class="pill ${cls}">${esc(r.status)}</span></div>`;
+  }).join("") || `<p class="hint" style="padding:10px 0">No runs yet.</p>`;
+}
+
+// ---------- header actions ----------
+$("#power").addEventListener("click", () => act(null, () => api("/api/toggle", { body: { enabled: !S.settings.enabled } }), (o) => o.enabled ? "Scheduled digests on" : "Scheduled digests off"));
+$("#runBtn").addEventListener("click", (e) => { if (confirm("Collect now and email the digest when it's ready (about 5-15 minutes)?")) act(e.target, () => api("/api/run", { body: { preview: false } }), "Collection started"); });
+$("#previewBtn").addEventListener("click", (e) => act(e.target, () => api("/api/run", { body: { preview: true } }), "Preview started (no email). It appears under Digests in about 5-15 minutes."));
+
+// ---------- connections + account ----------
+$("#xSave").addEventListener("click", (e) => act(e.target, async () => {
+  const out = await api("/api/x-cookies", { body: { auth_token: $("#xAuth").value, ct0: $("#xCt0").value } });
+  $("#xAuth").value = $("#xCt0").value = ""; return out;
+}, "X cookies saved"));
+$("#xDelete").addEventListener("click", (e) => { if (confirm("Remove the X cookies? X profiles will be skipped.")) act(e.target, () => api("/api/x-cookies", { method: "DELETE" }), "Removed"); });
+$("#fbSecretSave").addEventListener("click", (e) => act(e.target, async () => { const o = await api("/api/app-secret", { body: { secret: $("#fbSecret").value } }); $("#fbSecret").value = ""; return o; }, "Saved"));
+$("#testEmail").addEventListener("click", (e) => act(e.target, async () => {
+  await api("/api/settings", { body: collect("delivery") });
+  return api("/api/test-email", { method: "POST", body: {} });
+}, (o) => `Test email sent to ${o.to.join(", ")}`));
+$("#pwSave").addEventListener("click", (e) => act(e.target, async () => {
+  const o = await api("/api/password", { body: { current: $("#pwCur").value, new_password: $("#pwNew").value } });
+  $("#pwCur").value = $("#pwNew").value = ""; return o;
+}, "Login code changed"));
+$("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST", body: {} }); location.reload(); });
+
+load().catch((e) => toast(e.message, true));
+</script>
+</body>
+</html>

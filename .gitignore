@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.wrangler/
+out/
+.DS_Store
+.dev.vars
+wrangler.local.toml

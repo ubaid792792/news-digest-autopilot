@@ -1,0 +1,56 @@
+name: digest
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "live = digest is emailed at its delivery time, preview = dashboard only"
+        type: choice
+        options: [preview, live]
+        default: preview
+      run_id:
+        description: "Run id from the dashboard (leave empty for manual runs)"
+        type: string
+        default: ""
+      digest_id:
+        description: "Digest id from the dashboard (leave empty to make a preview)"
+        type: string
+        default: ""
+      trigger:
+        type: string
+        default: manual
+
+concurrency:
+  group: digest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt
+      # Whisper speech models are downloaded once and reused from the cache.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-models-v1
+      - name: Collect and build the digest
+        run: python -m pipeline.main
+        env:
+          MODE: ${{ inputs.mode }}
+          RUN_ID: ${{ inputs.run_id }}
+          DIGEST_ID: ${{ inputs.digest_id }}
+          TRIGGER: ${{ inputs.trigger }}
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          PIPELINE_SECRET: ${{ secrets.PIPELINE_SECRET }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

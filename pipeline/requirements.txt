@@ -1,0 +1,7 @@
+feedparser==6.0.14
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.2
+json-repair>=0.30
+twscrape==0.20.1
+faster-whisper==1.2.1
