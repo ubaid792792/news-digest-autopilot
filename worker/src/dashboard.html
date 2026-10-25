@@ -118,6 +118,26 @@
       <p class="hint" id="srcHelp"></p>
     </div>
     <div class="card"><h2>Your sources</h2><p class="hint">Turn a source off to pause it without deleting it. Status shows what the last run found.</p><div id="sourceList"></div></div>
+    <div class="card">
+      <h2>Research prompts</h2>
+      <p class="hint">Ask for news your sources may miss. Each run, the AI turns every prompt into Google News searches for the
+        digest's time window, keeps only the articles that match, reads them and adds them to the digest (merged with the
+        same story from your sources).</p>
+      <label for="rPrompt">What to look for</label>
+      <textarea id="rPrompt" style="min-height:70px" placeholder="Latest news on Pakistan's talks with the IMF, including statements by the finance minister"></textarea>
+      <div class="row">
+        <div><label for="rTopic">Put results under</label><select id="rTopic"></select></div>
+        <div style="flex:0 0 150px"><label for="rMax">Max articles per run</label><input type="number" id="rMax" min="1" max="25" value="8"></div>
+        <div style="flex:0 0 auto"><button class="btn primary" id="rAdd">Add prompt</button></div>
+      </div>
+      <div id="researchList" style="margin-top:12px"></div>
+      <div class="row" style="margin-top:6px">
+        <div><label for="research_edition">Google News edition</label><select data-setting="research_edition" id="research_edition">
+          <option value="PK:en">Pakistan (English)</option><option value="PK:ur">Pakistan (Urdu)</option><option value="IN:en">India (English)</option>
+          <option value="AE:en">UAE (English)</option><option value="GB:en">United Kingdom</option><option value="US:en">United States</option></select></div>
+        <div style="flex:0 0 auto"><button class="btn" data-save="sources">Save edition</button></div>
+      </div>
+    </div>
   </section>
 
   <!-- Topics -->
@@ -329,7 +349,7 @@ try { const t = localStorage.getItem("nd_tab"); if (t) $(`#tabs button[data-tab=
 // ---------- load + render ----------
 async function load() {
   S = await api("/api/state");
-  renderHeader(); renderDigests(); renderSources(); renderTopics(); renderSettings(); renderSlots(); renderConnections(); renderRuns();
+  renderHeader(); renderDigests(); renderSources(); renderResearch(); renderTopics(); renderSettings(); renderSlots(); renderConnections(); renderRuns();
   clearTimeout(load.t);
   if (S.digests.some((d) => d.status === "collecting")) load.t = setTimeout(() => load().catch(() => {}), 20000);
 }
@@ -389,8 +409,13 @@ const HELP = {
   instagram: "Paste an Instagram profile link like https://www.instagram.com/dawn.today/. Only public Business/Creator accounts can be read.",
   facebook: "Facebook can't be read directly. On fetchrss.com, create a feed from the Facebook page link, copy its RSS link and paste it here.",
 };
-$("#srcKind").addEventListener("change", () => ($("#srcHelp").textContent = HELP[$("#srcKind").value]));
-$("#srcHelp").textContent = HELP.rss;
+const PLACEHOLDER = { rss: "https://www.dawn.com", x: "https://x.com/dawn_com", instagram: "https://www.instagram.com/dawn.today/", facebook: "https://fetchrss.com/rss/....xml" };
+function srcKindChanged() {
+  const k = $("#srcKind").value;
+  $("#srcHelp").textContent = HELP[k]; $("#srcInput").placeholder = PLACEHOLDER[k];
+}
+$("#srcKind").addEventListener("change", srcKindChanged);
+srcKindChanged();
 
 function renderSources() {
   const groups = Object.keys(KIND).map((k) => {
@@ -432,6 +457,41 @@ $("#sourceList").addEventListener("click", async (e) => {
     const patch = { name }; if (link.trim() && link.trim() !== src.url) patch.input = link.trim();
     act(el, () => api(`/api/sources/${id}`, { method: "PATCH", body: patch }), "Saved");
   }
+});
+
+function topicOptions(selected) {
+  return `<option value="">Let the AI decide</option>` + S.topics.map((t) => `<option value="${esc(t.name)}" ${t.name === selected ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+}
+function renderResearch() {
+  if (document.activeElement !== $("#rTopic")) $("#rTopic").innerHTML = topicOptions($("#rTopic").value);
+  $("#researchList").innerHTML = S.research.map((r) => {
+    let queries = [];
+    try { queries = JSON.parse(r.last_queries || "[]"); } catch {}
+    const status = r.last_run_at ? (r.last_error ? `<div class="err">${esc(r.last_error)}</div>` : `<div class="meta">${r.last_count} articles · ${ago(r.last_run_at)}${queries.length ? ` · searched: ${esc(queries.join(" | "))}` : ""}</div>`) : `<div class="meta">Not run yet</div>`;
+    return `<div class="item" data-id="${r.id}"><div class="main"><div class="name">${esc(r.prompt)}</div>${status}
+      <div class="row" style="margin-top:6px"><div><select data-act="topic" aria-label="Put results under">${topicOptions(r.topic)}</select></div>
+      <div style="flex:0 0 110px"><input type="number" data-act="max" min="1" max="25" value="${r.max_items}" aria-label="Max articles"></div></div></div>
+      <label class="check" style="margin:0"><input type="checkbox" data-act="toggle" ${r.enabled ? "checked" : ""}> On</label>
+      <button class="btn small" data-act="edit">Edit</button><button class="btn small danger" data-act="del">Delete</button></div>`;
+  }).join("") || `<p class="hint">No research prompts yet.</p>`;
+}
+$("#rAdd").addEventListener("click", (e) => act(e.target, async () => {
+  const out = await api("/api/research", { body: { prompt: $("#rPrompt").value, topic: $("#rTopic").value, max_items: Number($("#rMax").value) } });
+  $("#rPrompt").value = ""; return out;
+}, "Research prompt added"));
+$("#researchList").addEventListener("change", (e) => {
+  const el = e.target.closest("[data-act]"); if (!el) return;
+  const id = el.closest(".item").dataset.id;
+  const body = el.dataset.act === "topic" ? { topic: el.value } : el.dataset.act === "max" ? { max_items: Number(el.value) } : el.dataset.act === "toggle" ? { enabled: el.checked } : null;
+  if (body) act(null, () => api(`/api/research/${id}`, { method: "PATCH", body }), "Saved");
+});
+$("#researchList").addEventListener("click", (e) => {
+  const el = e.target.closest("button[data-act]"); if (!el) return;
+  const id = el.closest(".item").dataset.id;
+  const r = S.research.find((x) => String(x.id) === id);
+  if (el.dataset.act === "del") { if (confirm("Delete this research prompt?")) act(el, () => api(`/api/research/${id}`, { method: "DELETE" }), "Deleted"); return; }
+  const prompt = window.prompt("What to look for", r.prompt);
+  if (prompt !== null && prompt.trim() && prompt.trim() !== r.prompt) act(el, () => api(`/api/research/${id}`, { method: "PATCH", body: { prompt } }), "Saved");
 });
 
 function renderTopics() {
@@ -481,7 +541,7 @@ function collect(section) {
   return out;
 }
 $$("[data-save]").forEach((b) => b.addEventListener("click", () => {
-  const sec = { writing: "writing", schedule: "schedule", collection: "schedule", delivery: "delivery" }[b.dataset.save];
+  const sec = { writing: "writing", schedule: "schedule", collection: "schedule", delivery: "delivery", sources: "sources" }[b.dataset.save];
   const patch = collect(sec);
   if (sec === "schedule") patch.slots = $$("#slotTimes input").map((i) => i.value).filter(Boolean);
   act(b, async () => {

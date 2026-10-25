@@ -35,14 +35,16 @@ const DEFAULTS = {
   max_video_minutes_each: 15,
   max_video_minutes_per_run: 90,
   stories_per_call: 8,
+  research_edition: "PK:en",
   email_enabled: true,
   email_recipients: [],
   email_subject: "{title} | {date}, {time}",
   email_when_empty: false,
+  // Fastest good models first; slow or exhausted ones are skipped for the rest of a run.
   text_models: [
-    "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest",
-    "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
-    "gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemma-4-31b-it", "gemma-4-26b-a4b-it",
+    "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.7-flash", "gemini-3.8-flash",
+    "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest",
+    "gemma-4-31b-it", "gemma-4-26b-a4b-it",
   ],
   // Internal (not editable through /api/settings)
   public_url: "",
@@ -251,6 +253,7 @@ function cleanSettingsPatch(patch) {
   if ("max_posts_per_source" in out) out.max_posts_per_source = Math.max(5, Math.min(200, Math.round(out.max_posts_per_source)));
   if ("max_video_minutes_each" in out) out.max_video_minutes_each = Math.max(1, Math.min(60, out.max_video_minutes_each));
   if ("max_video_minutes_per_run" in out) out.max_video_minutes_per_run = Math.max(0, Math.min(300, out.max_video_minutes_per_run));
+  if ("research_edition" in out && !/^[A-Z]{2}:[a-z]{2}$/.test(out.research_edition)) throw new HttpError(400, "Search edition must look like PK:en");
   if ("stories_per_call" in out) out.stories_per_call = Math.max(1, Math.min(20, Math.round(out.stories_per_call)));
   if ("email_recipients" in out) {
     const bad = out.email_recipients.find((e) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
@@ -612,8 +615,9 @@ function digestSummary(d) {
 
 async function panelState(env) {
   const s = await getSettings(env);
-  const [sources, topics, digests, runs, usage] = await Promise.all([
+  const [sources, research, topics, digests, runs, usage] = await Promise.all([
     env.DB.prepare("SELECT * FROM sources ORDER BY kind, id").all(),
+    env.DB.prepare("SELECT * FROM research ORDER BY id").all(),
     env.DB.prepare("SELECT * FROM topics ORDER BY position, id").all(),
     env.DB.prepare("SELECT id, kind, trigger, status, slot_date, slot_time, slot_at, window_start, window_end, send_email, created_at, ready_at, sent_at, run_id, item_count, story_count, error FROM digests ORDER BY created_at DESC LIMIT 60").all(),
     env.DB.prepare("SELECT id, digest_id, started_at, finished_at, mode, trigger, status, summary, gh_run_url FROM runs ORDER BY started_at DESC LIMIT 30").all(),
@@ -622,6 +626,7 @@ async function panelState(env) {
   return {
     settings: publicSettings(s),
     sources: sources.results,
+    research: research.results,
     topics: topics.results,
     digests: digests.results.map(digestSummary),
     runs: runs.results,
@@ -735,9 +740,10 @@ async function pipelineRoute(request, env, ctx, path, method, url) {
   if (path === "/pipeline/config" && method === "GET") {
     const s = await getSettings(env);
     const id = url.searchParams.get("digest_id") || "";
-    const [digest, sources, topics, seen] = await Promise.all([
+    const [digest, sources, research, topics, seen] = await Promise.all([
       env.DB.prepare("SELECT id, kind, status, window_start, window_end, slot_at FROM digests WHERE id = ?").bind(id).first(),
       env.DB.prepare("SELECT id, kind, url, handle, name FROM sources WHERE enabled = 1 ORDER BY kind, id").all(),
+      env.DB.prepare("SELECT id, prompt, topic, max_items FROM research WHERE enabled = 1 ORDER BY id").all(),
       env.DB.prepare("SELECT name, description, emoji FROM topics WHERE enabled = 1 ORDER BY position, id").all(),
       env.DB.prepare("SELECT id FROM seen WHERE seen_at > ?").bind(isoAt(Date.now() - 8 * 86400000)).all(),
     ]);
@@ -746,6 +752,7 @@ async function pipelineRoute(request, env, ctx, path, method, url) {
       settings: publicSettings(s),
       digest,
       sources: sources.results,
+      research: research.results,
       topics: topics.results,
       seen: seen.results.map((r) => r.id),
       x_cookies: s.x_auth_token && s.x_ct0 ? { auth_token: s.x_auth_token, ct0: s.x_ct0 } : null,
@@ -778,6 +785,10 @@ async function pipelineRoute(request, env, ctx, path, method, url) {
     }
     for (const r of (b.source_status || []).slice(0, 200)) {
       stmts.push(env.DB.prepare("UPDATE sources SET last_fetched_at = ?, last_error = ?, last_count = ? WHERE id = ?").bind(nowIso(), r.error || null, r.count || 0, r.id));
+    }
+    for (const r of (b.research_status || []).slice(0, 100)) {
+      stmts.push(env.DB.prepare("UPDATE research SET last_run_at = ?, last_error = ?, last_count = ?, last_queries = ? WHERE id = ?")
+        .bind(nowIso(), r.error || null, r.count || 0, JSON.stringify(r.queries || []), r.id));
     }
     await env.DB.batch(stmts);
     if (b.x_status) await saveSettings(env, { x_status: { ...b.x_status, at: nowIso() } });
@@ -907,6 +918,51 @@ async function panelRoute(request, env, ctx, path, method) {
       return json(await testSource(env, await getSettings(env), src));
     } catch (err) {
       return json({ ok: false, message: err.message });
+    }
+  }
+
+  // Research prompts
+  if (path === "/api/research" && method === "POST") {
+    const b = await body(request);
+    const prompt = String(b.prompt || "").trim();
+    if (prompt.length < 5) throw new HttpError(400, "Write what news to look for");
+    if (prompt.length > 1000) throw new HttpError(400, "Research prompt is too long (1000 characters max)");
+    const max = Math.max(1, Math.min(25, Math.round(Number(b.max_items) || 8)));
+    await env.DB.prepare("INSERT INTO research (prompt, topic, max_items, created_at) VALUES (?, ?, ?, ?)")
+      .bind(prompt, String(b.topic || "").slice(0, 60), max, nowIso()).run();
+    return json({ ok: true });
+  }
+  if ((m = path.match(/^\/api\/research\/(\d+)$/))) {
+    const id = Number(m[1]);
+    if (method === "DELETE") {
+      await env.DB.prepare("DELETE FROM research WHERE id = ?").bind(id).run();
+      return json({ ok: true });
+    }
+    if (method === "PATCH") {
+      const b = await body(request);
+      const sets = [];
+      const vals = [];
+      if ("prompt" in b) {
+        const prompt = String(b.prompt || "").trim();
+        if (prompt.length < 5 || prompt.length > 1000) throw new HttpError(400, "Research prompt must be 5 to 1000 characters");
+        sets.push("prompt = ?");
+        vals.push(prompt);
+      }
+      if ("topic" in b) {
+        sets.push("topic = ?");
+        vals.push(String(b.topic || "").slice(0, 60));
+      }
+      if ("max_items" in b) {
+        sets.push("max_items = ?");
+        vals.push(Math.max(1, Math.min(25, Math.round(Number(b.max_items) || 8))));
+      }
+      if ("enabled" in b) {
+        sets.push("enabled = ?");
+        vals.push(b.enabled ? 1 : 0);
+      }
+      if (!sets.length) throw new HttpError(400, "nothing to change");
+      await env.DB.prepare(`UPDATE research SET ${sets.join(", ")} WHERE id = ?`).bind(...vals, id).run();
+      return json({ ok: true });
     }
   }
 

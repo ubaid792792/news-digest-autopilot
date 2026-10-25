@@ -4,7 +4,7 @@
 const esc = (v) =>
   String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-const KIND_LABEL = { rss: "Web", facebook: "Facebook", x: "X", instagram: "Instagram" };
+const KIND_LABEL = { rss: "Web", facebook: "Facebook", x: "X", instagram: "Instagram", research: "Web search" };
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const C = { text: "#16181d", muted: "#6b7280", line: "#e5e7eb", accent: "#2563eb", soft: "#f3f4f6", warn: "#b45309" };
 

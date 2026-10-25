@@ -16,11 +16,12 @@ log = logging.getLogger("ai")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 # Each Gemini model has its own free daily allowance, so a long chain keeps the digest going.
 DEFAULT_TEXT_MODELS = [
-    "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest",
-    "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
-    "gemini-flash-lite-latest", "gemini-2.5-flash-lite", "gemma-4-31b-it", "gemma-4-26b-a4b-it",
+    "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.7-flash", "gemini-3.8-flash",
+    "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest",
+    "gemma-4-31b-it", "gemma-4-26b-a4b-it",
 ]
 MAX_RATE_WAIT = 65  # seconds; longer waits mean the model is out for now
+REQUEST_TIMEOUT = 120
 
 
 def parse_json(text: str):
@@ -71,8 +72,13 @@ class TextAI:
         server_errors = 0
         while True:
             self.calls += 1
-            r = requests.post(GEMINI_URL.format(model=model), json=body, timeout=180,
-                              headers={"x-goog-api-key": self.key})
+            try:
+                r = requests.post(GEMINI_URL.format(model=model), json=body, timeout=REQUEST_TIMEOUT,
+                                  headers={"x-goog-api-key": self.key})
+            except requests.Timeout as exc:
+                # Overloaded models can hang for minutes; skip this one for the rest of the run.
+                self.exhausted.add(model)
+                raise RuntimeError(f"{model}: no answer within {REQUEST_TIMEOUT}s") from exc
             if r.status_code in (500, 502, 503, 504) and server_errors < 1:
                 server_errors += 1
                 time.sleep(8)

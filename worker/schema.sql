@@ -20,6 +20,20 @@ CREATE TABLE IF NOT EXISTS sources (
   UNIQUE (kind, url)
 );
 
+-- Research prompts: requests the AI turns into Google News searches each run.
+CREATE TABLE IF NOT EXISTS research (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  prompt TEXT NOT NULL,
+  topic TEXT NOT NULL DEFAULT '',
+  max_items INTEGER NOT NULL DEFAULT 8,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  last_run_at TEXT,
+  last_error TEXT,
+  last_count INTEGER,
+  last_queries TEXT
+);
+
 CREATE TABLE IF NOT EXISTS topics (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,

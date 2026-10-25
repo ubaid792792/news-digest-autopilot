@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from .ai import TextAI
 from .digest import build_digest
 from .media import transcribe_posts
+from .research import run_research
 from .sources import Post, fetch_article_text, fetch_instagram, fetch_rss, fetch_x, parse_time
 from .worker_api import WorkerAPI
 
@@ -111,19 +112,26 @@ def main() -> int:
         since = parse_time(cfg["digest"]["window_start"]) or datetime.now(timezone.utc) - timedelta(hours=24)
         log.info("digest %s (%s): posts since %s from %d sources", digest_id, mode, since.isoformat(), len(cfg.get("sources", [])))
 
+        ai = TextAI(os.environ.get("GEMINI_API_KEY", ""), worker, s.get("text_models"))
         posts, source_status, warnings, x_status = collect(cfg, worker, since)
         log.info("%d new posts collected", len(posts))
+        found, research_status = run_research(ai, cfg.get("research", []), since, s, set(cfg.get("seen", [])))
+        if found:
+            known = {p.id for p in posts}
+            posts.extend(p for p in found if p.id not in known)
+            log.info("%d articles added by research prompts", len(found))
+        warnings.extend(f"Research prompt {r['id']}: {r['error']}" for r in research_status if r.get("error"))
         media = transcribe_posts(posts, s)
         if media["videos"]:
             log.info("videos: %d found, %d transcribed (%.0f min), %d skipped", media["videos"], media["transcribed"],
                      media["seconds"] / 60, media["skipped"])
 
-        ai = TextAI(os.environ.get("GEMINI_API_KEY", ""), worker, s.get("text_models"))
         data = build_digest(ai, posts, cfg, warnings)
         stories = sum(len(t["stories"]) for t in data["topics"])
         worker.finish_digest(digest_id, {
             "status": "ready", "data": data, "item_count": len(posts), "story_count": stories,
-            "seen": [p.id for p in posts], "source_status": source_status, "x_status": x_status, "ai_calls": ai.calls,
+            "seen": [p.id for p in posts], "source_status": source_status, "research_status": research_status,
+            "x_status": x_status, "ai_calls": ai.calls,
         })
         models = ", ".join(sorted(set(ai.used))) or "none"
         summary = (f"{len(posts)} posts -> {stories} stories; videos {media['transcribed']}/{media['videos']} transcribed; "

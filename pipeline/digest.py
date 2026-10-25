@@ -15,7 +15,7 @@ log = logging.getLogger("digest")
 
 SORT_BATCH = 120
 WRITE_CHAR_BUDGET = 14000
-KIND_LABEL = {"rss": "website", "facebook": "Facebook", "x": "X", "instagram": "Instagram"}
+KIND_LABEL = {"rss": "website", "facebook": "Facebook", "x": "X", "instagram": "Instagram", "research": "web search"}
 STOPWORDS = set("a an the of in on at to for and or but with from by as is are was were be after over".split())
 
 
@@ -243,6 +243,12 @@ def build_digest(ai: TextAI, posts: list[Post], cfg: dict, warnings: list[str]) 
         return data
     posts = sorted(posts, key=lambda p: p.posted_at.timestamp() if p.posted_at else 0)
     groups = sort_posts(ai, posts, topics, s, warnings)
+    # Research prompts with a chosen heading put their own stories under it.
+    names = {t["name"] for t in topics}
+    for g in groups:
+        hints = {p.topic_hint for p in g["posts"]}
+        if len(hints) == 1 and (hint := hints.pop()) in names:
+            g["topic"] = hint
     log.info("%d posts grouped into %d stories", len(posts), len(groups))
     stories = write_stories(ai, groups, s, warnings)
 

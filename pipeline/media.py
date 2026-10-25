@@ -39,6 +39,25 @@ def _duration(path: Path) -> float | None:
         return None
 
 
+def _load_audio(path: Path):
+    """16 kHz mono float32 samples. Decoded here with PyAV's current API because faster-whisper's own
+    decoder passes an option newer PyAV versions removed."""
+    import av
+    import numpy as np
+    chunks = []
+    with av.open(str(path)) as c:
+        stream = next((s for s in c.streams if s.type == "audio"), None)
+        if stream is None:
+            return None
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        for frame in c.decode(stream):
+            chunks.extend(f.to_ndarray() for f in resampler.resample(frame))
+        chunks.extend(f.to_ndarray() for f in resampler.resample(None))
+    if not chunks:
+        return None
+    return np.concatenate(chunks, axis=1).flatten().astype(np.float32) / 32768.0
+
+
 def transcribe_posts(posts: list[Post], s: dict) -> dict:
     """Fill post.transcript for posts with a video URL, newest first, within the per-run minute budget."""
     videos = [p for p in posts if p.video_url]
@@ -76,8 +95,12 @@ def transcribe_posts(posts: list[Post], s: dict) -> dict:
                     p.notes.append(f"Video not transcribed (longer than {int(max_each // 60)} minutes); text only.")
                     stats["skipped"] += 1
                     continue
+                audio = _load_audio(path)
+                if audio is None or not len(audio):
+                    p.notes.append("Video has no sound; text only.")
+                    continue
                 t0 = time.time()
-                segments, info = model.transcribe(str(path), vad_filter=True, beam_size=1,
+                segments, info = model.transcribe(audio, vad_filter=True, beam_size=1,
                                                   condition_on_previous_text=False)
                 text = " ".join(seg.text.strip() for seg in segments).strip()
                 stats["seconds"] += info.duration or seconds

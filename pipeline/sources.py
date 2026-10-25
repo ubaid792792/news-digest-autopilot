@@ -41,6 +41,7 @@ class Post:
     transcript: str = ""
     transcript_lang: str = ""
     notes: list[str] = field(default_factory=list)
+    topic_hint: str = ""
 
 
 def clean_text(value: str) -> str:
