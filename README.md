@@ -27,6 +27,9 @@ Open the Worker URL and log in with your login code.
 - **Digests**: every delivery, readable in the browser. "Email it now" resends one.
 - **Sources**: add websites/RSS feeds, X profiles, Instagram profiles and Facebook pages (as FetchRSS links).
   Turn sources on/off, test them, edit or delete them.
+  **Research prompts** (same tab): write a request such as "Latest on Pakistan's IMF talks"; each run the AI
+  turns it into Google News searches for the digest's time window, keeps only matching articles, reads them
+  and merges them into the digest (optionally under a heading you pick).
 - **Topics**: add, rename, reorder and delete the headings stories are sorted under.
 - **Writing**: digest title, language, paragraph or bullets, length, the writing prompt and extra sorting rules.
 - **Schedule**: number of deliveries per day and the time of each, time zone, and which posts each digest
@@ -46,6 +49,7 @@ result; **Preview** does the same without email.
 | Facebook pages | FetchRSS free feed of the page | free plan limits apply; may lag |
 | X profiles | twscrape with a spare X account's cookies | may break when X changes; the spare account can be locked |
 | Instagram | Meta Business Discovery (official) | public Business/Creator accounts only; Reels whose video Instagram hides use the caption only |
+| Research prompts | Google News RSS search + AI relevance check | free; articles are read from the publisher's site |
 
 ## Free limits (approximate)
 
