@@ -275,7 +275,7 @@ def _check(st: dict, posts: list[Post]) -> str | None:
     """Why a written story can't be trusted, or None when it passes."""
     used = _story_posts(posts)
     out = " ".join([st["headline"], st["text"], *st["bullets"]])
-    src = " ".join(f"{p.title} {p.text} {p.transcript}" for p in used)
+    src = " ".join(f"{p.source_name} {p.title} {p.text} {p.transcript}" for p in used)
     invented = [n for n in _numbers(out) if len(n) >= 3 and n not in _numbers(src)]
     if invented:
         return f"numbers not in its sources: {', '.join(sorted(invented)[:4])}"
@@ -284,11 +284,15 @@ def _check(st: dict, posts: list[Post]) -> str | None:
         return "the AI described a different story"
     latin = sum(c.isascii() for c in src) / max(1, len(src))
     if latin > 0.8:
-        # Proper names must come from the sources (catches misspelt or invented names). A shared 5-letter
-        # prefix is enough, so "Pakistani" passes when the source says "Pakistan's".
+        # Names (capitalised words next to another capitalised word, like "Masoud Pezeshkian") must come
+        # from the sources, which catches misspelt or invented names. Demonyms pass on their stem, so
+        # "Pakistani" or "Iranian" is fine when the source says "Pakistan's" or "Iran's".
         low = src.lower()
-        odd = [w for w in set(re.findall(r"\b[A-Z][a-z]{3,}\b", out))
-               if w not in COMMON_CAPS and w[:5].lower() not in low]
+        names = set()
+        for m in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", out):
+            names.update(w for w in m.group(0).split() if len(w) >= 4)
+        odd = [w for w in names if w not in COMMON_CAPS and w.lower() not in low
+               and not (re.search(r"(i|an|ian|ese|ish)$", w) and w[:4].lower() in low)]
         if odd:
             return f"names not in its sources: {', '.join(sorted(odd)[:4])}"
         words = {w for w in re.findall(r"[a-z]{5,}", out.lower())}
@@ -344,7 +348,9 @@ def write_stories(ai: TextAI, groups: list[tuple[str, list[Post]]], s: dict, war
                     raise ValueError("answer has no stories list")
 
             try:
-                data = ai.json(system, user, check=check)
+                # Writing is many calls and every story is checked afterwards, so use the fast models first
+                # and keep the stronger models' small daily allowance for sorting and grouping.
+                data = ai.json(system, user, check=check, prefer="fast")
             except Exception as exc:  # noqa: BLE001
                 log.warning("writing failed for %d stories: %s", len(b), exc)
                 continue

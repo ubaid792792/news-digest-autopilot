@@ -112,12 +112,16 @@ class TextAI:
         self.used.append(f"workers-ai-{size}")
         return data
 
-    def json(self, system: str, user: str, check=None):
+    def json(self, system: str, user: str, check=None, prefer: str = "smart"):
         """Gemini chain, then Cloudflare's large model. `check(data)` may raise to reject a malformed
-        answer, which moves on to the next model."""
+        answer, which moves on to the next model. prefer="fast" tries the lite models first."""
         errors = []
+        models = self.models
+        if prefer == "fast":
+            light = [m for m in self.models if "lite" in m or m.startswith("gemma")]
+            models = light + [m for m in self.models if m not in light]
         if self.key:
-            for model in self.models:
+            for model in models:
                 if model in self.exhausted:
                     continue
                 try:
