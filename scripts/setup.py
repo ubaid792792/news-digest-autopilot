@@ -134,6 +134,9 @@ def setup_worker(env: dict) -> str:
         print("D1 database ready")
     wrangler("d1", "execute", DB_NAME, "--remote", "--file", "schema.sql", "--yes")
     wrangler("d1", "execute", DB_NAME, "--remote", "--file", "seed.sql", "--yes")
+    # Columns added after the first release; "duplicate column" just means it is already there.
+    for stmt in ("ALTER TABLE topics ADD COLUMN keywords TEXT NOT NULL DEFAULT ''",):
+        wrangler("d1", "execute", DB_NAME, "--remote", "--yes", "--command", stmt, check=False)
     if env.get("EMAIL_TO"):
         wrangler("d1", "execute", DB_NAME, "--remote", "--yes", "--command",
                  f"INSERT OR IGNORE INTO settings (key, value) VALUES ('email_recipients', {sql_value([env['EMAIL_TO']])})")

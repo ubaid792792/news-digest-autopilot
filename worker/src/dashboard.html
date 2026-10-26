@@ -145,13 +145,15 @@
     <div class="card">
       <h2>Topic headings</h2>
       <p class="hint">Stories are sorted under these headings, in this order. The description tells the AI what belongs there.
-        Anything that fits none goes under <b id="otherName">Other News</b> (rename it in Writing).</p>
+        "Must mention" words are a hard rule: a post can only go under a heading if it contains one of them (leave empty to let the AI decide alone).
+        Posts that fit no heading go to <b id="otherName">Other News</b> (choose how in Writing).</p>
       <div id="topicList"></div>
       <h3>Add a heading</h3>
       <div class="row">
         <div style="flex:0 0 70px"><label for="tEmoji">Emoji</label><input type="text" id="tEmoji" maxlength="8" placeholder="📰"></div>
         <div><label for="tName">Heading</label><input type="text" id="tName" placeholder="Local News"></div>
         <div style="flex:2"><label for="tDesc">What belongs here</label><input type="text" id="tDesc" placeholder="City news from Karachi and Lahore"></div>
+        <div style="flex:2"><label for="tKeys">Must mention one of (optional)</label><input type="text" id="tKeys" placeholder="Karachi, Lahore"></div>
         <div style="flex:0 0 auto"><button class="btn primary" id="tAdd">Add</button></div>
       </div>
     </div>
@@ -174,6 +176,12 @@
       <label class="check"><input type="checkbox" data-setting="show_time"> Show the time of each story</label>
       <label class="check"><input type="checkbox" data-setting="show_sources"> Show source names and links</label>
       <label class="check"><input type="checkbox" data-setting="show_emoji"> Show topic emojis</label>
+      <label class="check"><input type="checkbox" data-setting="show_empty_topics"> Show every heading, with "No new news in this period" when empty</label>
+      <div class="row">
+        <div><label for="other_news_mode">News that fits none of my headings</label><select data-setting="other_news_mode" id="other_news_mode">
+          <option value="list">Short list of headlines at the end</option><option value="full">Full stories under the unsorted heading</option><option value="drop">Leave it out</option></select></div>
+        <div style="flex:0 0 170px"><label for="other_news_limit">Max headlines in the list</label><input type="number" min="1" max="100" data-setting="other_news_limit" id="other_news_limit"></div>
+      </div>
     </div>
     <div class="card">
       <h2>Writing prompt</h2>
@@ -213,7 +221,7 @@
       <h2>Collection</h2>
       <div class="row">
         <div><label for="max_posts_per_source">Max posts per source per run</label><input type="number" min="5" max="200" data-setting="max_posts_per_source" id="max_posts_per_source"></div>
-        <div><label for="stories_per_call">Stories per AI request</label><input type="number" min="1" max="20" data-setting="stories_per_call" id="stories_per_call"></div>
+        <div><label for="stories_per_call">Stories per AI request (fewer = more accurate)</label><input type="number" min="1" max="6" data-setting="stories_per_call" id="stories_per_call"></div>
       </div>
       <label class="check"><input type="checkbox" data-setting="skip_retweets"> Skip reposts (retweets) on X</label>
       <label class="check"><input type="checkbox" data-setting="include_replies"> Include the account's replies on X</label>
@@ -501,6 +509,7 @@ function renderTopics() {
     <input type="text" class="emoji" data-f="emoji" value="${esc(t.emoji)}" maxlength="8" aria-label="Emoji">
     <div class="fields"><input type="text" data-f="name" value="${esc(t.name)}" aria-label="Heading">
       <textarea data-f="description" aria-label="What belongs here" placeholder="What belongs here">${esc(t.description)}</textarea>
+      <input type="text" data-f="keywords" value="${esc(t.keywords || "")}" aria-label="Must mention" placeholder="Must mention one of (comma separated), e.g. Meezan Bank, MEBL">
       <div class="tools"><label class="check" style="margin:0"><input type="checkbox" data-f="enabled" ${t.enabled ? "checked" : ""}> Used</label>
         <button class="btn small primary" data-act="save">Save</button><button class="btn small danger" data-act="del">Delete</button></div></div></div>`).join("")
     || `<p class="hint">No headings yet. Without headings everything goes under ${esc(S.settings.other_topic_name)}.</p>`;
@@ -511,7 +520,7 @@ $("#topicList").addEventListener("click", (e) => {
   const row = el.closest(".topic"); const id = row.dataset.id; const a = el.dataset.act;
   if (a === "save") {
     const f = (n) => row.querySelector(`[data-f="${n}"]`);
-    return act(el, () => api(`/api/topics/${id}`, { method: "PATCH", body: { name: f("name").value, description: f("description").value, emoji: f("emoji").value, enabled: f("enabled").checked } }), "Topic saved");
+    return act(el, () => api(`/api/topics/${id}`, { method: "PATCH", body: { name: f("name").value, description: f("description").value, emoji: f("emoji").value, keywords: f("keywords").value, enabled: f("enabled").checked } }), "Topic saved");
   }
   if (a === "del") { if (confirm("Delete this heading?")) act(el, () => api(`/api/topics/${id}`, { method: "DELETE" }), "Deleted"); return; }
   const ids = S.topics.map((t) => String(t.id)); const i = ids.indexOf(id); const j = a === "up" ? i - 1 : i + 1;
@@ -519,8 +528,8 @@ $("#topicList").addEventListener("click", (e) => {
   act(el, () => api("/api/topics/order", { body: { ids } }));
 });
 $("#tAdd").addEventListener("click", (e) => act(e.target, async () => {
-  const out = await api("/api/topics", { body: { name: $("#tName").value, description: $("#tDesc").value, emoji: $("#tEmoji").value } });
-  $("#tName").value = $("#tDesc").value = $("#tEmoji").value = ""; return out;
+  const out = await api("/api/topics", { body: { name: $("#tName").value, description: $("#tDesc").value, emoji: $("#tEmoji").value, keywords: $("#tKeys").value } });
+  $("#tName").value = $("#tDesc").value = $("#tEmoji").value = $("#tKeys").value = ""; return out;
 }, "Heading added"));
 
 // ---------- settings forms ----------

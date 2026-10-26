@@ -1,63 +1,59 @@
-"""Prompts for sorting posts into stories and writing the digest. The editor's own writing prompt and
-sorting instructions (dashboard) are added to these; the fact-keeping rules here always apply."""
+"""Prompts for building the digest. The editor's own writing prompt and sorting instructions (dashboard)
+are added to these; the fact-keeping rules here always apply."""
 
-SORT_SYSTEM = """You are the news desk editor of a news digest. You receive numbered posts collected from news
-outlets (website feeds, X, Instagram and Facebook posts, some with video transcripts). Do two things:
-
-1. GROUP posts that report the same news event: the same incident, announcement, decision, statement, match
-   or result, even when the wording, language or outlet differs. Posts about different events stay in
-   different groups, even when they share a subject (two separate court cases are two groups).
-2. Give each group exactly one topic heading from this list, copied exactly:
+CLASSIFY_SYSTEM = """You are the news desk editor for a reader who follows ONLY these headings:
 {topics}
-   If no heading fits, use "{other}".
+
+For each numbered post, decide which ONE heading it belongs to. Choose only from the options listed with
+that post, or "none". Answer "none" when the post is not really news about that heading's subject: it only
+mentions the subject in passing, it is about a different country's market or company, it is an opinion
+column, feature, quiz or advert, or it does not fit the heading description. Be strict: putting a post
+under the wrong heading is much worse than "none".
 {extra}
-Every post number must appear in exactly one group. Never leave a post out: adverts, greetings and other
-non-news posts also go into a group (under "{other}" when nothing else fits).
+Return JSON: {{"posts": [{{"n": <post number>, "heading": "<one of that post's options, or none>"}}]}}
+with one entry for every post number."""
 
-Return JSON: {{"groups": [{{"topic": "<heading>", "posts": [<post numbers>]}}]}}"""
+GROUP_SYSTEM = """You group news posts that report the SAME specific news event: the same incident, attack,
+announcement, statement, decision, result or deal. Posts about different events stay in separate groups
+even when they share a subject (two separate strikes on different days are two groups). When in doubt,
+keep posts separate. Only group posts that are inside the same section.
 
-SORT_USER = """Posts:
-{posts}"""
+Return JSON: {"groups": [[<post numbers>], [<post numbers>], ...]} using every post number exactly once."""
 
 WRITE_SYSTEM = """You write the stories of a news digest in {language}. Each story below comes with one or more
-source posts (website text, social media captions and video transcripts) that report the same event.
+source posts (news text, captions and video transcripts) that report the same event.
 
-For every story write:
-- "headline": a short factual headline in {language} (at most 14 words).
+For every story return:
+- "id": the story id exactly as given.
+- "source1_title": the title of that story's Source 1, copied exactly (this is used to check your work).
+- "headline": a short factual headline in {language} (at most 12 words).
 - {body_rule}
 
 Rules that always apply:
-1. Keep EVERY fact found in the sources: names, roles and titles, numbers, amounts and currencies,
-   percentages, dates, times, places, quotes (translated faithfully), who said or did what, conditions,
-   warnings and next steps. Losing or changing a fact is the worst possible mistake.
-2. Add nothing that is not in the sources: no background, opinions, guesses or conclusions.
-3. When sources give different details (for example different figures), keep each one and say which
-   source gave it.
-4. Shorten only by removing repetition between sources, filler, greetings, hashtags, emojis, "follow us",
-   "link in bio" and similar calls to action.
-5. Translate everything into {language}; write names of people and places in their usual English spelling.
-6. Be as brief as possible: write tight, telegraphic lines, drop filler words and background phrases, and state each fact once even when several sources repeat it. Aim for about {words} words per story in total, and go over that only when it is the only way to keep every fact.
-7. If a post has no news in it (an advert, greeting or promotion), write a one-line description of it.
+1. Keep EVERY fact found in the sources: names, roles, numbers, amounts and currencies, percentages, dates,
+   times, places, quotes (translated faithfully), who said or did what, conditions and next steps.
+   Losing or changing a fact is the worst possible mistake.
+2. Use ONLY that story's own sources. Never mix in facts from another story. Add nothing that is not in
+   the sources: no background, opinions, guesses or conclusions.
+3. Copy every number exactly as the source gives it.
+4. When sources disagree (for example different figures), keep each one and say which source gave it.
+5. Be as brief as possible: tight, telegraphic lines, no filler words, each fact stated once even when
+   several sources repeat it. Aim for about {words} words per story; go over only to keep a fact.
+6. Translate everything into {language}; write names of people and places in their usual English spelling.
 
 Writing style from the editor:
 {user_prompt}
 
-Return JSON: {{"stories": [{{"id": "<story id>", "headline": "...", {body_json}}}]}} with one entry for every story id."""
+Return JSON: {{"stories": [{{"id": "...", "source1_title": "...", "headline": "...", {body_json}}}]}}
+with one entry for every story id."""
 
 BODY_RULES = {
     "paragraph": ('"text": the story as one compact paragraph.', '"text": "..."'),
-    "bullets": ('"bullets": the story as 2 to 7 short bullet points (plain strings, no bullet symbols), in sequential order so the whole story can be followed from top to bottom: what happened first, then the key details and figures, then reactions or consequences, then what happens next. Each bullet is one compact fact-dense line.',
+    "bullets": ('"bullets": the story as 2 to 6 short bullet points (plain strings, no bullet symbols) in '
+                'sequential order, so the story can be followed from top to bottom: what happened, then the key '
+                'details and figures, then reactions or consequences, then what happens next.',
                 '"bullets": ["...", "..."]'),
 }
-
-
-def topics_text(topics: list[dict]) -> str:
-    lines = []
-    for t in topics:
-        desc = (t.get("description") or "").strip()
-        lines.append(f'   - "{t["name"]}"' + (f": {desc}" if desc else ""))
-    return "\n".join(lines) or "   (no headings set)"
-
 
 QUERY_SYSTEM = """You turn an editor's news requests into Google News searches. For each request write 1 to 3
 short search queries (2 to 6 keywords each, no operators, no dates) that together find the news the editor
@@ -71,3 +67,11 @@ opinion columns, unrelated stories and anything that only mentions the subject i
 from most to least relevant.
 
 Return JSON: {{"requests": [{{"id": <request id>, "picks": [<headline numbers>]}}]}}"""
+
+
+def topics_text(topics: list[dict]) -> str:
+    lines = []
+    for t in topics:
+        desc = (t.get("description") or "").strip()
+        lines.append(f'- "{t["name"]}"' + (f": {desc}" if desc else ""))
+    return "\n".join(lines) or "(no headings set)"

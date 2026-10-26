@@ -20,6 +20,9 @@ const DEFAULTS = {
   show_emoji: true,
   story_order: "sources",
   other_topic_name: "Other News",
+  other_news_mode: "list",
+  other_news_limit: 20,
+  show_empty_topics: true,
   digest_title: "News Digest",
   writing_prompt:
     "Write like a wire-service editor: neutral, factual and plain. Start with the most important fact. Use active voice. " +
@@ -34,7 +37,7 @@ const DEFAULTS = {
   whisper_model: "small",
   max_video_minutes_each: 15,
   max_video_minutes_per_run: 90,
-  stories_per_call: 8,
+  stories_per_call: 4,
   research_edition: "PK:en",
   email_enabled: true,
   email_recipients: [],
@@ -254,7 +257,9 @@ function cleanSettingsPatch(patch) {
   if ("max_video_minutes_each" in out) out.max_video_minutes_each = Math.max(1, Math.min(60, out.max_video_minutes_each));
   if ("max_video_minutes_per_run" in out) out.max_video_minutes_per_run = Math.max(0, Math.min(300, out.max_video_minutes_per_run));
   if ("research_edition" in out && !/^[A-Z]{2}:[a-z]{2}$/.test(out.research_edition)) throw new HttpError(400, "Search edition must look like PK:en");
-  if ("stories_per_call" in out) out.stories_per_call = Math.max(1, Math.min(20, Math.round(out.stories_per_call)));
+  if ("stories_per_call" in out) out.stories_per_call = Math.max(1, Math.min(6, Math.round(out.stories_per_call)));
+  if ("other_news_mode" in out && !["list", "full", "drop"].includes(out.other_news_mode)) throw new HttpError(400, "bad other_news_mode");
+  if ("other_news_limit" in out) out.other_news_limit = Math.max(1, Math.min(100, Math.round(out.other_news_limit)));
   if ("email_recipients" in out) {
     const bad = out.email_recipients.find((e) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
     if (bad) throw new HttpError(400, `"${bad}" is not an email address`);
@@ -744,7 +749,7 @@ async function pipelineRoute(request, env, ctx, path, method, url) {
       env.DB.prepare("SELECT id, kind, status, window_start, window_end, slot_at FROM digests WHERE id = ?").bind(id).first(),
       env.DB.prepare("SELECT id, kind, url, handle, name FROM sources WHERE enabled = 1 ORDER BY kind, id").all(),
       env.DB.prepare("SELECT id, prompt, topic, max_items FROM research WHERE enabled = 1 ORDER BY id").all(),
-      env.DB.prepare("SELECT name, description, emoji FROM topics WHERE enabled = 1 ORDER BY position, id").all(),
+      env.DB.prepare("SELECT name, description, emoji, keywords FROM topics WHERE enabled = 1 ORDER BY position, id").all(),
       env.DB.prepare("SELECT id FROM seen WHERE seen_at > ?").bind(isoAt(Date.now() - 8 * 86400000)).all(),
     ]);
     if (!digest) throw new HttpError(404, `digest ${id} not found`);
@@ -972,8 +977,8 @@ async function panelRoute(request, env, ctx, path, method) {
     const name = String(b.name || "").trim().slice(0, 60);
     if (!name) throw new HttpError(400, "Topic heading is empty");
     const pos = await env.DB.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS p FROM topics").first();
-    const res = await env.DB.prepare("INSERT OR IGNORE INTO topics (name, description, emoji, position) VALUES (?, ?, ?, ?)")
-      .bind(name, String(b.description || "").slice(0, 400), String(b.emoji || "").slice(0, 8), pos.p).run();
+    const res = await env.DB.prepare("INSERT OR IGNORE INTO topics (name, description, emoji, keywords, position) VALUES (?, ?, ?, ?, ?)")
+      .bind(name, String(b.description || "").slice(0, 600), String(b.emoji || "").slice(0, 8), String(b.keywords || "").slice(0, 1000), pos.p).run();
     if (!res.meta?.changes) throw new HttpError(409, "That topic already exists");
     return json({ ok: true });
   }
@@ -992,8 +997,9 @@ async function panelRoute(request, env, ctx, path, method) {
       const b = await body(request);
       const name = String(b.name || "").trim().slice(0, 60);
       if (!name) throw new HttpError(400, "Topic heading is empty");
-      await env.DB.prepare("UPDATE topics SET name = ?, description = ?, emoji = ?, enabled = ? WHERE id = ?")
-        .bind(name, String(b.description || "").slice(0, 400), String(b.emoji || "").slice(0, 8), b.enabled === false ? 0 : 1, id).run();
+      await env.DB.prepare("UPDATE topics SET name = ?, description = ?, emoji = ?, keywords = ?, enabled = ? WHERE id = ?")
+        .bind(name, String(b.description || "").slice(0, 600), String(b.emoji || "").slice(0, 8), String(b.keywords || "").slice(0, 1000),
+          b.enabled === false ? 0 : 1, id).run();
       return json({ ok: true });
     }
   }

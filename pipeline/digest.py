@@ -1,5 +1,10 @@
-"""Turn collected posts into the digest: group same-event posts, sort them under the user's topic
-headings, then write each story short in the chosen language while keeping every fact."""
+"""Turn collected posts into the digest, in small checked steps so a weak free model can't scramble it:
+1. classify each post under one of the user's headings or "none" (a heading's must-mention keywords
+   decide which headings a post may go under at all),
+2. group posts about the same event inside each heading,
+3. write each story short in the chosen language, then check it against its own sources (numbers must
+   come from the sources, and the model must name the story's first source) before accepting it.
+Posts under no heading become a one-line "other news" list (or are dropped, per settings)."""
 from __future__ import annotations
 
 import difflib
@@ -13,8 +18,11 @@ from .sources import Post
 
 log = logging.getLogger("digest")
 
-SORT_BATCH = 120
-WRITE_CHAR_BUDGET = 14000
+CLASSIFY_BATCH = 30
+GROUP_BATCH = 60
+WRITE_CHAR_BUDGET = 9000
+MAX_POSTS_PER_STORY = 6
+POST_CHARS = 1500
 KIND_LABEL = {"rss": "website", "facebook": "Facebook", "x": "X", "instagram": "Instagram", "research": "web search"}
 STOPWORDS = set("a an the of in on at to for and or but with from by as is are was were be after over".split())
 
@@ -38,159 +46,267 @@ def when(p: Post) -> str:
 
 
 def body_of(p: Post) -> str:
-    """Post text without the title repeated at its start."""
-    text = p.text or ""
-    if p.title and text.startswith(p.title[:60]):
+    """Post text with the title in front unless the text already starts with it."""
+    text = (p.text or "").strip()
+    if not p.title or text.startswith(p.title[:60]):
         return text
-    return f"{p.title}\n{text}".strip() if p.title and p.title not in text else text
+    return f"{p.title}\n{text}" if p.title not in text else text
 
 
-# ---------- step 1: group and sort ----------
+def snippet(p: Post, n: int) -> str:
+    return re.sub(r"\s+", " ", f"{p.text} {p.transcript}".replace(p.title, "", 1)).strip()[:n]
 
-def _keyword_topic(p: Post, topics: list[dict], other: str) -> str:
-    text = f"{p.title} {p.text}".lower()
-    best, score = other, 0
+
+# ---------- step 1: headings ----------
+
+def keywords_of(t: dict) -> list[str]:
+    return [k.strip().lower() for k in re.split(r"[,;\n]", t.get("keywords") or "") if k.strip()]
+
+
+def keyword_hits(text: str, kws: list[str]) -> int:
+    return sum(1 for k in kws if re.search(rf"(?<!\w){re.escape(k)}(?!\w)", text))
+
+
+def options_for(p: Post, topics: list[dict]) -> list[tuple[str, int]]:
+    """Headings this post may go under: those whose keywords it mentions, plus headings without keywords."""
+    text = f"{p.title} {p.text} {p.transcript}".lower()
+    out = []
     for t in topics:
-        words = {w for w in re.findall(r"\w{4,}", f"{t['name']} {t.get('description', '')}".lower())}
-        hits = sum(1 for w in words if w in text)
-        if hits > score:
-            best, score = t["name"], hits
-    return best
+        kws = keywords_of(t)
+        hits = keyword_hits(text, kws) if kws else 0
+        if hits or not kws:
+            out.append((t["name"], hits))
+    return out
 
 
-def _fallback_groups(batch: list[Post], topics: list[dict], other: str) -> list[dict]:
-    groups: list[dict] = []
-    for p in batch:
-        key = title_key(p.title)
-        match = next((g for g in groups if is_similar(key, g["key"])), None)
-        if match:
-            match["posts"].append(p)
+def _fallback_heading(opts: list[tuple[str, int]]) -> str | None:
+    """Without an AI answer: the single matching heading, or a clear keyword winner; otherwise none."""
+    keyed = sorted((o for o in opts if o[1] > 0), key=lambda o: -o[1])
+    if len(keyed) == 1:
+        return keyed[0][0]
+    if len(keyed) > 1 and keyed[0][1] >= keyed[1][1] + 2:
+        return keyed[0][0]
+    return None
+
+
+def classify(ai: TextAI, posts: list[Post], topics: list[dict], s: dict, warnings: list[str]) -> dict[str, str | None]:
+    heading: dict[str, str | None] = {}
+    todo = []
+    for p in posts:
+        opts = options_for(p, topics)
+        if not opts:
+            heading[p.id] = None
         else:
-            groups.append({"topic": _keyword_topic(p, topics, other), "posts": [p], "key": key})
+            todo.append((p, opts))
+    log.info("%d posts mention a heading's keywords, %d mention none", len(todo), len(posts) - len(todo))
+    extra = (s.get("sort_prompt") or "").strip()
+    system = prompts.CLASSIFY_SYSTEM.format(topics=prompts.topics_text(topics),
+                                            extra=f"\nExtra instructions from the editor:\n{extra}\n" if extra else "")
+    failed = 0
+    for start in range(0, len(todo), CLASSIFY_BATCH):
+        batch = todo[start:start + CLASSIFY_BATCH]
+        lines = []
+        for n, (p, opts) in enumerate(batch, 1):
+            choices = " | ".join([o[0] for o in opts] + ["none"])
+            hint = f" · found by a search for news on {p.topic_hint}" if p.topic_hint else ""
+            lines.append(f"[{n}] options: {choices}\n    {p.source_name}{hint} · {when(p)} · {p.title} — {snippet(p, 300)}")
+
+        def check(data):
+            if not isinstance(data, dict) or not isinstance(data.get("posts"), list):
+                raise ValueError("answer has no posts list")
+
+        answers: dict[int, str] = {}
+        try:
+            data = ai.json(system, "Posts:\n" + "\n".join(lines), check=check)
+            for a in data["posts"]:
+                if isinstance(a, dict):
+                    try:
+                        answers[int(a.get("n"))] = str(a.get("heading") or "").strip()
+                    except (TypeError, ValueError):
+                        continue
+        except Exception as exc:  # noqa: BLE001
+            log.warning("classification failed for %d posts: %s", len(batch), exc)
+            failed += len(batch)
+        for n, (p, opts) in enumerate(batch, 1):
+            allowed = {o[0].lower(): o[0] for o in opts}
+            ans = answers.get(n)
+            if ans is None:
+                heading[p.id] = _fallback_heading(opts)
+            else:
+                heading[p.id] = allowed.get(ans.lower())  # anything outside the post's options counts as none
+    if failed:
+        warnings.append(f"AI sorting was unavailable for {failed} posts; they were sorted by heading keywords only.")
+    return heading
+
+
+# ---------- step 2: same-event groups ----------
+
+def _similar_groups(posts: list[Post]) -> list[list[Post]]:
+    groups: list[list[Post]] = []
+    for p in posts:
+        key = title_key(p.title)
+        match = next((g for g in groups if is_similar(key, title_key(g[0].title))), None)
+        (match.append(p) if match else groups.append([p]))
     return groups
 
 
-def sort_posts(ai: TextAI, posts: list[Post], topics: list[dict], s: dict, warnings: list[str]) -> list[dict]:
-    other = s.get("other_topic_name") or "Other News"
-    names = {t["name"].lower(): t["name"] for t in topics}
-    extra = (s.get("sort_prompt") or "").strip()
-    system = prompts.SORT_SYSTEM.format(topics=prompts.topics_text(topics), other=other,
-                                        extra=f"\nExtra instructions from the editor:\n{extra}\n" if extra else "")
-    groups: list[dict] = []
-    for start in range(0, len(posts), SORT_BATCH):
-        batch = posts[start:start + SORT_BATCH]
-        lines = []
-        for n, p in enumerate(batch, 1):
-            snippet = re.sub(r"\s+", " ", f"{p.text} {p.transcript}".replace(p.title, "", 1)).strip()[:260]
-            lines.append(f"[{n}] {p.source_name} ({KIND_LABEL.get(p.kind, p.kind)}) · {when(p)} · {p.title} — {snippet}")
+def group_events(ai: TextAI, by_heading: dict[str, list[Post]]) -> list[tuple[str, list[Post]]]:
+    out: list[tuple[str, list[Post]]] = []
+    pending = [(h, ps) for h, ps in by_heading.items() if ps]
+    for h, ps in pending:
+        if len(ps) == 1:
+            out.append((h, [ps[0]]))
+    sections = [(h, ps) for h, ps in pending if len(ps) > 1]
+    calls: list[list[tuple[str, list[Post]]]] = []
+    cur, size = [], 0
+    for h, ps in sections:
+        if cur and size + len(ps) > GROUP_BATCH:
+            calls.append(cur)
+            cur, size = [], 0
+        cur.append((h, ps))
+        size += len(ps)
+    if cur:
+        calls.append(cur)
+
+    for call in calls:
+        numbered: list[tuple[str, Post]] = []
+        parts = []
+        for h, ps in call:
+            parts.append(f"## Section: {h}")
+            for p in ps:
+                numbered.append((h, p))
+                parts.append(f"[{len(numbered)}] {p.source_name} · {when(p)} · {p.title} — {snippet(p, 160)}")
 
         def check(data):
             if not isinstance(data, dict) or not isinstance(data.get("groups"), list):
                 raise ValueError("answer has no groups list")
 
         try:
-            data = ai.json(system, prompts.SORT_USER.format(posts="\n".join(lines)), check=check)
+            data = ai.json(prompts.GROUP_SYSTEM, "\n".join(parts), check=check)
         except Exception as exc:  # noqa: BLE001
-            log.warning("sorting failed, using simple grouping: %s", exc)
-            warnings.append("AI sorting was unavailable for some posts; they were grouped by headline similarity.")
-            groups.extend(_fallback_groups(batch, topics, other))
+            log.warning("grouping failed, using headline similarity: %s", exc)
+            for h, ps in call:
+                out.extend((h, g) for g in _similar_groups(ps))
             continue
         used: set[int] = set()
-        batch_groups = []
         for g in data["groups"]:
-            if not isinstance(g, dict):
-                continue
-            nums = []
-            for n in g.get("posts") or g.get("items") or []:
+            members = []
+            for n in g if isinstance(g, list) else []:
                 try:
                     n = int(n)
                 except (TypeError, ValueError):
                     continue
-                if 1 <= n <= len(batch) and n not in used:
+                if 1 <= n <= len(numbered) and n not in used:
                     used.add(n)
-                    nums.append(n)
-            if not nums:
-                continue
-            topic = names.get(str(g.get("topic", "")).strip().lower(), other)
-            members = [batch[n - 1] for n in nums]
-            batch_groups.append({"topic": topic, "posts": members, "key": title_key(members[0].title)})
-        missing = [p for n, p in enumerate(batch, 1) if n not in used]
-        if missing:
-            log.info("%d posts were not grouped by the AI; adding them separately", len(missing))
-            batch_groups.extend(_fallback_groups(missing, topics, other))
-        groups.extend(batch_groups)
-    if len(posts) > SORT_BATCH:
-        groups = _merge_across_batches(groups)
-    return groups
+                    members.append(numbered[n - 1])
+            # A group may never cross sections; split it if the model mixed them.
+            for h in dict.fromkeys(m[0] for m in members):
+                out.append((h, [m[1] for m in members if m[0] == h]))
+        for n, (h, p) in enumerate(numbered, 1):
+            if n not in used:
+                out.append((h, [p]))
+    return out
 
 
-def _merge_across_batches(groups: list[dict]) -> list[dict]:
-    merged: list[dict] = []
-    for g in groups:
-        match = next((m for m in merged if m["topic"] == g["topic"] and is_similar(g["key"], m["key"])), None)
-        if match:
-            match["posts"].extend(g["posts"])
-        else:
-            merged.append(g)
-    return merged
+# ---------- step 3: write and check ----------
+
+NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
-# ---------- step 2: write ----------
+def _numbers(text: str) -> set[str]:
+    out = set()
+    for m in NUM_RE.findall(text or ""):
+        n = m.replace(",", "").rstrip(".")
+        if "." in n:
+            n = n.rstrip("0").rstrip(".")
+        out.add(n)
+    return out
 
-def _story_material(sid: str, g: dict, share: int) -> str:
-    parts = [f"### Story {sid} (topic: {g['topic']})"]
-    per_post = max(400, share // max(1, len(g["posts"])))
-    for i, p in enumerate(g["posts"], 1):
-        text = body_of(p)
-        transcript = p.transcript
-        if len(text) + len(transcript) > per_post:
-            # Keep proportionally more of whichever is longer, never dropping either completely.
-            t_share = int(per_post * len(transcript) / (len(text) + len(transcript))) if transcript else 0
-            text = text[: per_post - t_share]
-            transcript = transcript[:t_share]
-        block = f"Source {i}: {p.source_name} ({KIND_LABEL.get(p.kind, p.kind)}) · {when(p)}\n{text}"
-        if transcript:
-            block += f"\nVideo transcript ({p.transcript_lang or 'original language'}): {transcript}"
+
+def _story_posts(posts: list[Post]) -> list[Post]:
+    """Up to MAX_POSTS_PER_STORY posts, richest first and one per outlet before repeating outlets."""
+    ranked = sorted(posts, key=lambda p: -(len(p.text) + len(p.transcript)))
+    picked, outlets = [], set()
+    for p in ranked:
+        if p.source_name not in outlets:
+            picked.append(p)
+            outlets.add(p.source_name)
+    for p in ranked:
+        if p not in picked:
+            picked.append(p)
+    return picked[:MAX_POSTS_PER_STORY]
+
+
+def _material(sid: str, heading: str, posts: list[Post]) -> str:
+    parts = [f"### Story {sid} (heading: {heading})"]
+    for i, p in enumerate(_story_posts(posts), 1):
+        block = f"Source {i}: {p.source_name} ({KIND_LABEL.get(p.kind, p.kind)}) · {when(p)}\nTitle: {p.title}\n{body_of(p)[:POST_CHARS]}"
+        if p.transcript:
+            block += f"\nVideo transcript ({p.transcript_lang or 'original language'}): {p.transcript[:POST_CHARS]}"
         parts.append(block)
     return "\n\n".join(parts)
 
 
-def _fallback_story(g: dict) -> dict:
-    p = g["posts"][0]
-    text = re.sub(r"\s+", " ", body_of(p)).strip()
-    if len(text) > 700:
-        text = text[:700].rsplit(" ", 1)[0] + "…"
-    return {"headline": p.title[:160], "text": text, "bullets": [],
-            "notes": ["Not shortened or translated: the AI writer was unavailable for this story."]}
+def _check(st: dict, posts: list[Post]) -> str | None:
+    """Why a written story can't be trusted, or None when it passes."""
+    used = _story_posts(posts)
+    out = " ".join([st["headline"], st["text"], *st["bullets"]])
+    src = " ".join(f"{p.title} {p.text} {p.transcript}" for p in used)
+    invented = [n for n in _numbers(out) if len(n) >= 3 and n not in _numbers(src)]
+    if invented:
+        return f"numbers not in its sources: {', '.join(sorted(invented)[:4])}"
+    echoed = st.get("source1_title", "")
+    if echoed and difflib.SequenceMatcher(None, echoed.lower(), used[0].title.lower()).ratio() < 0.6:
+        return "the AI described a different story"
+    latin = sum(c.isascii() for c in src) / max(1, len(src))
+    if latin > 0.8:
+        words = {w for w in re.findall(r"[a-z]{5,}", out.lower())}
+        if words:
+            hit = sum(1 for w in words if w in src.lower())
+            if hit / len(words) < 0.45:
+                return "the summary does not match its sources"
+    return None
 
 
-def write_stories(ai: TextAI, groups: list[dict], s: dict, warnings: list[str]) -> list[dict]:
-    style = s.get("item_style") if s.get("item_style") in prompts.BODY_RULES else "paragraph"
+def _extractive(posts: list[Post]) -> dict:
+    """Original wording from the first source, so facts stay exact when the AI result can't be trusted."""
+    p = _story_posts(posts)[0]
+    sentences = re.split(r"(?<=[.!?۔])\s+", re.sub(r"\s+", " ", p.text or "").strip())
+    bullets = []
+    for snt in sentences:
+        if snt and snt != p.title and len(" ".join(bullets + [snt]).split()) <= 70:
+            bullets.append(snt)
+        if len(bullets) >= 3:
+            break
+    return {"headline": p.title[:160], "text": "", "bullets": bullets or [p.title],
+            "notes": ["Shown in the source's own words (the AI summary did not pass the accuracy check)."]}
+
+
+def write_stories(ai: TextAI, groups: list[tuple[str, list[Post]]], s: dict, warnings: list[str]) -> list[dict]:
+    style = s.get("item_style") if s.get("item_style") in prompts.BODY_RULES else "bullets"
     body_rule, body_json = prompts.BODY_RULES[style]
     system = prompts.WRITE_SYSTEM.format(language=s.get("language") or "English", body_rule=body_rule, body_json=body_json,
-                                         words=int(s.get("words_per_story") or 70),
+                                         words=int(s.get("words_per_story") or 35),
                                          user_prompt=(s.get("writing_prompt") or "").strip() or "(none)")
-    per_call = int(s.get("stories_per_call") or 8)
-    written: dict[str, dict] = {}
+    per_call = max(1, min(6, int(s.get("stories_per_call") or 4)))
     ids = [f"S{i + 1}" for i in range(len(groups))]
+    written: dict[str, dict] = {}
+    rejected: dict[str, str] = {}
 
-    def chunks(todo: list[int]):
-        cur, size = [], 0
+    def run(todo: list[int], size: int) -> None:
+        chunk, chars = [], 0
+        batches = []
         for i in todo:
-            g = groups[i]
-            need = min(WRITE_CHAR_BUDGET, sum(len(body_of(p)) + len(p.transcript) + 120 for p in g["posts"]))
-            if cur and (len(cur) >= per_call or size + need > WRITE_CHAR_BUDGET):
-                yield cur
-                cur, size = [], 0
-            cur.append(i)
-            size += need
-        if cur:
-            yield cur
-
-    def run(todo: list[int]):
-        for chunk in chunks(todo):
-            share = max(1500, WRITE_CHAR_BUDGET // len(chunk))
-            user = "\n\n".join(_story_material(ids[i], groups[i], share) for i in chunk)
+            need = len(_material(ids[i], *groups[i]))
+            if chunk and (len(chunk) >= size or chars + need > WRITE_CHAR_BUDGET):
+                batches.append(chunk)
+                chunk, chars = [], 0
+            chunk.append(i)
+            chars += need
+        if chunk:
+            batches.append(chunk)
+        for b in batches:
+            user = "\n\n".join(_material(ids[i], *groups[i]) for i in b)
 
             def check(data):
                 if not isinstance(data, dict) or not isinstance(data.get("stories"), list):
@@ -199,34 +315,44 @@ def write_stories(ai: TextAI, groups: list[dict], s: dict, warnings: list[str]) 
             try:
                 data = ai.json(system, user, check=check)
             except Exception as exc:  # noqa: BLE001
-                log.warning("writing failed for %d stories: %s", len(chunk), exc)
+                log.warning("writing failed for %d stories: %s", len(b), exc)
                 continue
+            wanted = {ids[i]: i for i in b}
             for st in data["stories"]:
                 if not isinstance(st, dict):
                     continue
                 sid = str(st.get("id", "")).strip()
-                if sid in ids and sid not in written and (st.get("text") or st.get("bullets")):
-                    bullets = [str(b).strip() for b in st.get("bullets") or [] if str(b).strip()] if isinstance(st.get("bullets"), list) else []
-                    written[sid] = {"headline": str(st.get("headline") or "").strip(), "text": str(st.get("text") or "").strip(),
-                                    "bullets": bullets, "notes": []}
+                if sid not in wanted or sid in written:
+                    continue
+                bullets = [str(x).strip() for x in st.get("bullets") or [] if str(x).strip()] if isinstance(st.get("bullets"), list) else []
+                story = {"headline": str(st.get("headline") or "").strip(), "text": str(st.get("text") or "").strip(),
+                         "bullets": bullets, "source1_title": str(st.get("source1_title") or "").strip(), "notes": []}
+                if not (story["text"] or story["bullets"]):
+                    continue
+                why = _check(story, groups[wanted[sid]][1])
+                if why:
+                    rejected[sid] = why
+                    log.info("story %s rejected: %s", sid, why)
+                    continue
+                story.pop("source1_title")
+                written[sid] = story
 
-    run(list(range(len(groups))))
+    run(list(range(len(groups))), per_call)
     missing = [i for i, sid in enumerate(ids) if sid not in written]
     if missing:
-        log.info("retrying %d stories the AI skipped", len(missing))
-        run(missing)
-    out = []
-    fallbacks = 0
-    for i, g in enumerate(groups):
+        log.info("rewriting %d stories one at a time", len(missing))
+        run(missing, 1)
+    out, fallbacks = [], 0
+    for i, (heading, posts) in enumerate(groups):
         st = written.get(ids[i])
         if not st:
-            st = _fallback_story(g)
+            st = _extractive(posts)
             fallbacks += 1
         if not st["headline"]:
-            st["headline"] = g["posts"][0].title[:160]
+            st["headline"] = posts[0].title[:160]
         out.append(st)
     if fallbacks:
-        warnings.append(f"{fallbacks} stories are shown in their original wording because the free AI limit was reached.")
+        warnings.append(f"{fallbacks} stories are shown in the source's own words because the AI summary failed the accuracy check or the free AI limit was reached.")
     return out
 
 
@@ -235,53 +361,66 @@ def write_stories(ai: TextAI, groups: list[dict], s: dict, warnings: list[str]) 
 def build_digest(ai: TextAI, posts: list[Post], cfg: dict, warnings: list[str]) -> dict:
     s = cfg["settings"]
     topics = cfg.get("topics", [])
-    other = s.get("other_topic_name") or "Other News"
+    other_name = s.get("other_topic_name") or "Other News"
+    other_mode = s.get("other_news_mode") or "list"
     data = {"title": s.get("digest_title") or "News Digest", "generated_at": datetime.now(timezone.utc).isoformat(),
-            "window_start": cfg["digest"]["window_start"], "window_end": cfg["digest"]["window_end"], "topics": [],
-            "warnings": warnings}
+            "window_start": cfg["digest"]["window_start"], "window_end": cfg["digest"]["window_end"],
+            "topics": [{"name": t["name"], "emoji": t.get("emoji", ""), "stories": []} for t in topics],
+            "other": [], "other_name": other_name, "warnings": warnings}
     if not posts:
         return data
-    posts = sorted(posts, key=lambda p: p.posted_at.timestamp() if p.posted_at else 0)
-    groups = sort_posts(ai, posts, topics, s, warnings)
-    # Research prompts with a chosen heading put their own stories under it.
-    names = {t["name"] for t in topics}
-    for g in groups:
-        hints = {p.topic_hint for p in g["posts"]}
-        if len(hints) == 1 and (hint := hints.pop()) in names:
-            g["topic"] = hint
-    log.info("%d posts grouped into %d stories", len(posts), len(groups))
+    posts = sorted(posts, key=lambda p: p.posted_at.timestamp() if p.posted_at else 0, reverse=True)
+    heading = classify(ai, posts, topics, s, warnings)
+    by_heading: dict[str, list[Post]] = {t["name"]: [] for t in topics}
+    unsorted = []
+    for p in posts:
+        h = heading.get(p.id)
+        (by_heading[h].append(p) if h in by_heading else unsorted.append(p))
+    log.info("%d posts under headings, %d under none", len(posts) - len(unsorted), len(unsorted))
+    if other_mode == "full" and unsorted:
+        by_heading[other_name] = unsorted
+        data["topics"].append({"name": other_name, "emoji": "", "stories": []})
+
+    groups = group_events(ai, by_heading)
+    log.info("%d stories after grouping", len(groups))
     stories = write_stories(ai, groups, s, warnings)
 
-    by_topic: dict[str, list[dict]] = {}
-    for g, st in zip(groups, stories):
-        sources, seen_src, notes = [], set(), list(st.get("notes", []))
-        for p in sorted(g["posts"], key=lambda p: p.posted_at.timestamp() if p.posted_at else 0, reverse=True):
-            key = (p.source_name, p.url)
-            if key not in seen_src:
-                seen_src.add(key)
+    slots = {t["name"]: t for t in data["topics"]}
+    for (h, ps), st in zip(groups, stories):
+        sources, seen_urls, notes = [], set(), list(st.get("notes", []))
+        for p in sorted(ps, key=lambda p: p.posted_at.timestamp() if p.posted_at else 0, reverse=True):
+            if p.url not in seen_urls:
+                seen_urls.add(p.url)
                 sources.append({"name": p.source_name, "kind": p.kind, "url": p.url,
                                 "posted_at": p.posted_at.isoformat() if p.posted_at else None})
             for n in p.notes:
                 note = f"{p.source_name}: {n}"
                 if note not in notes:
                     notes.append(note)
-        times = [p.posted_at for p in g["posts"] if p.posted_at]
+        times = [p.posted_at for p in ps if p.posted_at]
         st.update({"sources": sources, "latest_at": max(times).isoformat() if times else None, "notes": notes,
-                   "_outlets": len({p.source_name for p in g["posts"]}), "_ts": max(times).timestamp() if times else 0})
-        by_topic.setdefault(g["topic"], []).append(st)
+                   "_outlets": len({p.source_name for p in ps}), "_ts": max(times).timestamp() if times else 0})
+        slots[h]["stories"].append(st)
 
-    order = [t["name"] for t in topics] + [other]
-    for name in order:
-        stories_here = by_topic.get(name)
-        if not stories_here:
-            continue
+    for t in data["topics"]:
         if s.get("story_order") == "newest":
-            stories_here.sort(key=lambda x: -x["_ts"])
+            t["stories"].sort(key=lambda x: -x["_ts"])
         else:
-            stories_here.sort(key=lambda x: (-x["_outlets"], -x["_ts"]))
-        for st in stories_here:
+            t["stories"].sort(key=lambda x: (-x["_outlets"], -x["_ts"]))
+        for st in t["stories"]:
             st.pop("_outlets", None)
             st.pop("_ts", None)
-        emoji = next((t.get("emoji", "") for t in topics if t["name"] == name), "")
-        data["topics"].append({"name": name, "emoji": emoji, "stories": stories_here})
+
+    if other_mode == "list":
+        limit = int(s.get("other_news_limit") or 20)
+        keys: list[str] = []
+        for p in unsorted:
+            k = title_key(p.title)
+            if any(is_similar(k, x) for x in keys):
+                continue
+            keys.append(k)
+            data["other"].append({"title": p.title, "source": p.source_name, "kind": p.kind, "url": p.url,
+                                  "posted_at": p.posted_at.isoformat() if p.posted_at else None})
+            if len(data["other"]) >= limit:
+                break
     return data
