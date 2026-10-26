@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -27,8 +28,13 @@ CANDIDATES_PER_REQUEST = 40
 def _search(query: str, hours: int, edition: str) -> list[dict]:
     country, lang = (edition or "PK:en").split(":")
     span = f"when:{hours}h" if hours <= 48 else f"when:{math.ceil(hours / 24)}d"
-    r = requests.get(GOOGLE_NEWS, timeout=30, headers={"User-Agent": UA},
-                     params={"q": f"{query} {span}", "hl": f"{lang}-{country}", "gl": country, "ceid": f"{country}:{lang}"})
+    for attempt in range(4):
+        r = requests.get(GOOGLE_NEWS, timeout=30, headers={"User-Agent": UA},
+                         params={"q": f"{query} {span}", "hl": f"{lang}-{country}", "gl": country, "ceid": f"{country}:{lang}"})
+        if r.status_code in (429, 500, 502, 503) and attempt < 3:
+            time.sleep(4 * (attempt + 1))  # Google News throttles busy servers; back off and retry
+            continue
+        break
     r.raise_for_status()
     out = []
     for e in feedparser.parse(r.content).entries:
