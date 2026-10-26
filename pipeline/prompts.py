@@ -7,8 +7,11 @@ CLASSIFY_SYSTEM = """You are the news desk editor for a reader who follows ONLY 
 For each numbered post, decide which ONE heading it belongs to. Choose only from the options listed with
 that post, or "none". Answer "none" when the post is not really news about that heading's subject: it only
 mentions the subject in passing, it is about a different country's market or company, it is an opinion
-column, feature, quiz or advert, or it does not fit the heading description. Be strict: putting a post
-under the wrong heading is much worse than "none".
+column, analysis or feature, a quiz or advert, or it does not fit the heading description. Ask: "Would a
+reader who follows this heading count this post as news ABOUT that subject?" A post about an election
+campaign, a celebrity, sport, culture, school textbooks, motorsport, another country's market, or energy
+prices in Europe is "none" even if it names the subject once. Be strict: putting a post under the wrong
+heading is much worse than "none".
 {extra}
 Return JSON: {{"posts": [{{"n": <post number>, "heading": "<one of that post's options, or none>"}}]}}
 with one entry for every post number."""
@@ -16,7 +19,8 @@ with one entry for every post number."""
 GROUP_SYSTEM = """You group news posts that report the SAME specific news event: the same incident, attack,
 announcement, statement, decision, result or deal. Posts about different events stay in separate groups
 even when they share a subject (two separate strikes on different days are two groups). When in doubt,
-keep posts separate. Only group posts that are inside the same section.
+keep posts separate. Posts are listed in sections by subject; posts in different sections may be grouped
+only when they clearly report the very same event.
 
 Return JSON: {"groups": [[<post numbers>], [<post numbers>], ...]} using every post number exactly once."""
 

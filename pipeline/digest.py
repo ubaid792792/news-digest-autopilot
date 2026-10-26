@@ -19,7 +19,7 @@ from .sources import Post
 log = logging.getLogger("digest")
 
 CLASSIFY_BATCH = 30
-GROUP_BATCH = 60
+GROUP_BATCH = 100
 WRITE_CHAR_BUDGET = 9000
 MAX_POSTS_PER_STORY = 6
 POST_CHARS = 1500
@@ -59,8 +59,15 @@ def snippet(p: Post, n: int) -> str:
 
 # ---------- step 1: headings ----------
 
-def keywords_of(t: dict) -> list[str]:
-    return [k.strip().lower() for k in re.split(r"[,;\n]", t.get("keywords") or "") if k.strip()]
+def keyword_groups(t: dict) -> list[list[str]]:
+    """'Iran, Tehran + Israel, IDF' -> [["iran", "tehran"], ["israel", "idf"]]: a post must mention a word
+    from every group (so a war heading can require both sides)."""
+    groups = []
+    for part in (t.get("keywords") or "").split("+"):
+        words = [k.strip().lower() for k in re.split(r"[,;\n]", part) if k.strip()]
+        if words:
+            groups.append(words)
+    return groups
 
 
 def keyword_hits(text: str, kws: list[str]) -> int:
@@ -68,14 +75,17 @@ def keyword_hits(text: str, kws: list[str]) -> int:
 
 
 def options_for(p: Post, topics: list[dict]) -> list[tuple[str, int]]:
-    """Headings this post may go under: those whose keywords it mentions, plus headings without keywords."""
+    """Headings this post may go under: those whose keyword groups it all mentions, plus headings without keywords."""
     text = f"{p.title} {p.text} {p.transcript}".lower()
     out = []
     for t in topics:
-        kws = keywords_of(t)
-        hits = keyword_hits(text, kws) if kws else 0
-        if hits or not kws:
-            out.append((t["name"], hits))
+        groups = keyword_groups(t)
+        if not groups:
+            out.append((t["name"], 0))
+            continue
+        hits = [keyword_hits(text, g) for g in groups]
+        if all(hits):
+            out.append((t["name"], sum(hits)))
     return out
 
 
@@ -151,12 +161,11 @@ def _similar_groups(posts: list[Post]) -> list[list[Post]]:
 
 
 def group_events(ai: TextAI, by_heading: dict[str, list[Post]]) -> list[tuple[str, list[Post]]]:
+    """Same-event groups. Posts filed under neighbouring headings (e.g. two Iran headings) can join one
+    group, which then goes under the heading most of its posts were filed under."""
+    order = list(by_heading)
     out: list[tuple[str, list[Post]]] = []
-    pending = [(h, ps) for h, ps in by_heading.items() if ps]
-    for h, ps in pending:
-        if len(ps) == 1:
-            out.append((h, [ps[0]]))
-    sections = [(h, ps) for h, ps in pending if len(ps) > 1]
+    sections = [(h, ps) for h, ps in by_heading.items() if ps]
     calls: list[list[tuple[str, list[Post]]]] = []
     cur, size = [], 0
     for h, ps in sections:
@@ -176,6 +185,9 @@ def group_events(ai: TextAI, by_heading: dict[str, list[Post]]) -> list[tuple[st
             for p in ps:
                 numbered.append((h, p))
                 parts.append(f"[{len(numbered)}] {p.source_name} · {when(p)} · {p.title} — {snippet(p, 160)}")
+        if len(numbered) == 1:
+            out.append((numbered[0][0], [numbered[0][1]]))
+            continue
 
         def check(data):
             if not isinstance(data, dict) or not isinstance(data.get("groups"), list):
@@ -185,6 +197,13 @@ def group_events(ai: TextAI, by_heading: dict[str, list[Post]]) -> list[tuple[st
             data = ai.json(prompts.GROUP_SYSTEM, "\n".join(parts), check=check)
         except Exception as exc:  # noqa: BLE001
             log.warning("grouping failed, using headline similarity: %s", exc)
+            for h, ps in call:
+                out.extend((h, g) for g in _similar_groups(ps))
+            continue
+        # A weak model sometimes lumps a whole list into one "group"; then trust headline similarity instead.
+        biggest = max((len(g) for g in data["groups"] if isinstance(g, list)), default=0)
+        if len(numbered) > 10 and biggest > max(6, 0.4 * len(numbered)):
+            log.warning("grouping answer lumped %d of %d posts together; using headline similarity", biggest, len(numbered))
             for h, ps in call:
                 out.extend((h, g) for g in _similar_groups(ps))
             continue
@@ -199,9 +218,10 @@ def group_events(ai: TextAI, by_heading: dict[str, list[Post]]) -> list[tuple[st
                 if 1 <= n <= len(numbered) and n not in used:
                     used.add(n)
                     members.append(numbered[n - 1])
-            # A group may never cross sections; split it if the model mixed them.
-            for h in dict.fromkeys(m[0] for m in members):
-                out.append((h, [m[1] for m in members if m[0] == h]))
+            if members:
+                counts = {h: sum(1 for m in members if m[0] == h) for h in dict.fromkeys(m[0] for m in members)}
+                best = max(counts, key=lambda h: (counts[h], -order.index(h)))
+                out.append((best, [m[1] for m in members]))
         for n, (h, p) in enumerate(numbered, 1):
             if n not in used:
                 out.append((h, [p]))
@@ -210,6 +230,10 @@ def group_events(ai: TextAI, by_heading: dict[str, list[Post]]) -> list[tuple[st
 
 # ---------- step 3: write and check ----------
 
+COMMON_CAPS = set("""Monday Tuesday Wednesday Thursday Friday Saturday Sunday January February March April June July
+August September October November December Source Sources According Also Meanwhile However Government Minister
+President Prime Officials Separately Both They This That These Their There Earlier Later After Before While During
+Following Despite Under Over Since Until Some Many Most Other Others Previously Currently Overall""".split())
 NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
@@ -260,6 +284,13 @@ def _check(st: dict, posts: list[Post]) -> str | None:
         return "the AI described a different story"
     latin = sum(c.isascii() for c in src) / max(1, len(src))
     if latin > 0.8:
+        # Proper names must come from the sources (catches misspelt or invented names). A shared 5-letter
+        # prefix is enough, so "Pakistani" passes when the source says "Pakistan's".
+        low = src.lower()
+        odd = [w for w in set(re.findall(r"\b[A-Z][a-z]{3,}\b", out))
+               if w not in COMMON_CAPS and w[:5].lower() not in low]
+        if odd:
+            return f"names not in its sources: {', '.join(sorted(odd)[:4])}"
         words = {w for w in re.findall(r"[a-z]{5,}", out.lower())}
         if words:
             hit = sum(1 for w in words if w in src.lower())

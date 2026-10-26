@@ -30,7 +30,9 @@ Open the Worker URL and log in with your login code.
   **Research prompts** (same tab): write a request such as "Latest on Pakistan's IMF talks"; each run the AI
   turns it into Google News searches for the digest's time window, keeps only matching articles, reads them
   and merges them into the digest (optionally under a heading you pick).
-- **Topics**: add, rename, reorder and delete the headings stories are sorted under.
+- **Topics**: add, rename, reorder and delete the headings stories are sorted under. "Must mention" words are a
+  hard rule: a post can only go under a heading if it contains one of them. Posts under no heading become a
+  short headline list at the end (or full stories, or are left out; set in Writing).
 - **Writing**: digest title, language, paragraph or bullets, length, the writing prompt and extra sorting rules.
 - **Schedule**: number of deliveries per day and the time of each, time zone, and which posts each digest
   covers ("since the previous digest" or "the last X hours").
