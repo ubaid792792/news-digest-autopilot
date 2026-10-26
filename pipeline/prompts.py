@@ -36,7 +36,7 @@ Rules that always apply:
 4. Shorten only by removing repetition between sources, filler, greetings, hashtags, emojis, "follow us",
    "link in bio" and similar calls to action.
 5. Translate everything into {language}; write names of people and places in their usual English spelling.
-6. Aim for about {words} words per story, but use more whenever needed to keep every fact.
+6. Be as brief as possible: write tight, telegraphic lines, drop filler words and background phrases, and state each fact once even when several sources repeat it. Aim for about {words} words per story in total, and go over that only when it is the only way to keep every fact.
 7. If a post has no news in it (an advert, greeting or promotion), write a one-line description of it.
 
 Writing style from the editor:
@@ -46,7 +46,7 @@ Return JSON: {{"stories": [{{"id": "<story id>", "headline": "...", {body_json}}
 
 BODY_RULES = {
     "paragraph": ('"text": the story as one compact paragraph.', '"text": "..."'),
-    "bullets": ('"bullets": the story as 2 to 6 short bullet points (plain strings, no bullet symbols).',
+    "bullets": ('"bullets": the story as 2 to 7 short bullet points (plain strings, no bullet symbols), in sequential order so the whole story can be followed from top to bottom: what happened first, then the key details and figures, then reactions or consequences, then what happens next. Each bullet is one compact fact-dense line.',
                 '"bullets": ["...", "..."]'),
 }
 
