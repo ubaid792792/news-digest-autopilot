@@ -249,7 +249,7 @@ function cleanSettingsPatch(patch) {
   if ("lead_minutes" in out) out.lead_minutes = Math.max(10, Math.min(120, Math.round(out.lead_minutes)));
   if ("lookback_hours" in out) out.lookback_hours = Math.max(1, Math.min(168, out.lookback_hours));
   if ("lookback_mode" in out && !["since_last", "fixed"].includes(out.lookback_mode)) throw new HttpError(400, "bad lookback_mode");
-  if ("item_style" in out && !["paragraph", "bullets"].includes(out.item_style)) throw new HttpError(400, "bad item_style");
+  if ("item_style" in out && !["paragraph", "bullets", "oneline"].includes(out.item_style)) throw new HttpError(400, "bad item_style");
   if ("story_order" in out && !["sources", "newest"].includes(out.story_order)) throw new HttpError(400, "bad story_order");
   if ("whisper_model" in out && !["tiny", "base", "small", "medium"].includes(out.whisper_model)) throw new HttpError(400, "bad whisper_model");
   if ("words_per_story" in out) out.words_per_story = Math.max(20, Math.min(300, Math.round(out.words_per_story)));

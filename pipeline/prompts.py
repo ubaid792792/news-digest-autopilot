@@ -52,6 +52,11 @@ Return JSON: {{"stories": [{{"id": "...", "source1_title": "...", "headline": ".
 with one entry for every story id."""
 
 BODY_RULES = {
+    "oneline": ('"text": the WHOLE story as ONE single sentence on one line: who did what, with every key number, '
+                'amount, date, place, name and quote-attribution packed in, written telegraphically (no filler words, '
+                'no lead-in like "According to"). Several facts are joined with commas or semicolons inside that one '
+                'sentence. Never split it into several sentences. Set "headline" to "".',
+                '"text": "..."'),
     "paragraph": ('"text": the story as one compact paragraph.', '"text": "..."'),
     "bullets": ('"bullets": the story as 2 to 6 short bullet points (plain strings, no bullet symbols) in '
                 'sequential order, so the story can be followed from top to bottom: what happened, then the key '

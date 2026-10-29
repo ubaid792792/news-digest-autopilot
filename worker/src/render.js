@@ -27,7 +27,26 @@ function sameDay(s, a, b) {
 const MAX_LINKS = 4;
 const safeUrl = (u) => (/^https?:\/\//i.test(String(u || "")) ? String(u) : "");
 
+// One-liner mode: one compact line per story (everything in a single sentence) with small time and links.
+function storyLine(st, s) {
+  const text = st.text || (Array.isArray(st.bullets) ? st.bullets.filter(Boolean).join("; ") : "") || st.headline || "";
+  const meta = [];
+  if (s.show_time !== false && st.latest_at) meta.push(esc(fmt(s, st.latest_at)));
+  if (s.show_sources !== false && st.sources?.length) {
+    const shown = st.sources.slice(0, 3).map((src) => {
+      const url = safeUrl(src.url);
+      const label = esc(src.name || "Source");
+      return url ? `<a href="${esc(url)}" style="color:${C.accent};text-decoration:none">${label}</a>` : label;
+    });
+    const more = st.sources.length - 3;
+    meta.push(shown.join(", ") + (more > 0 ? ` +${more}` : ""));
+  }
+  const notes = (st.notes || []).map((n) => ` <span style="color:${C.warn};font-size:12px">(${esc(n)})</span>`).join("");
+  return `<div style="padding:7px 0;border-bottom:1px solid ${C.line};font-size:15px;line-height:1.45">&bull; ${esc(text)}${meta.length ? ` <span style="font-size:12px;color:${C.muted}">[${meta.join(" &middot; ")}]</span>` : ""}${notes}</div>`;
+}
+
 function storyHtml(st, s) {
+  if (s.item_style === "oneline") return storyLine(st, s);
   const bullets = Array.isArray(st.bullets) ? st.bullets.filter(Boolean) : [];
   const bodyHtml = bullets.length
     ? `<ul style="margin:6px 0 0;padding-left:20px">${bullets.map((b) => `<li style="margin:3px 0">${esc(b)}</li>`).join("")}</ul>`
