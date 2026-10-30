@@ -42,7 +42,8 @@ Rules that always apply:
 3. Copy every number exactly as the source gives it.
 4. When sources disagree (for example different figures), keep each one and say which source gave it.
 5. Be as brief as possible: tight, telegraphic lines, no filler words, each fact stated once even when
-   several sources repeat it. Aim for about {words} words per story; go over only to keep a fact.
+   several sources repeat it. Aim for about {words} words per story; go over only to keep a number or a
+   fact that changes the meaning.
 6. Translate everything into {language}; write names of people and places in their usual English spelling.
 
 Writing style from the editor:
@@ -52,10 +53,13 @@ Return JSON: {{"stories": [{{"id": "...", "source1_title": "...", "headline": ".
 with one entry for every story id."""
 
 BODY_RULES = {
-    "oneline": ('"text": the WHOLE story as ONE single sentence on one line: who did what, with every key number, '
-                'amount, date, place, name and quote-attribution packed in, written telegraphically (no filler words, '
-                'no lead-in like "According to"). Several facts are joined with commas or semicolons inside that one '
-                'sentence. Never split it into several sentences. Set "headline" to "".',
+    "oneline": ('"text": the WHOLE story as ONE short sentence on one line, as compressed as possible: only the '
+                'essential who, what, where and when, plus EVERY figure that appears in the sources (amounts, '
+                'percentages, counts, prices, dates, times). Use short forms (Rs, $, bn, m, %, "vs", "PM"), no '
+                'filler, no background, no lead-in like "According to", and skip secondary names, titles and '
+                'descriptions; keep a name only if it is the main actor or is needed to understand the news. '
+                'It must fit on a single line (target about {words} words); never split it into several sentences. '
+                'Set "headline" to "".',
                 '"text": "..."'),
     "paragraph": ('"text": the story as one compact paragraph.', '"text": "..."'),
     "bullets": ('"bullets": the story as 2 to 6 short bullet points (plain strings, no bullet symbols) in '

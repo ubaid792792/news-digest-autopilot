@@ -320,6 +320,7 @@ def _extractive(posts: list[Post]) -> dict:
 def write_stories(ai: TextAI, groups: list[tuple[str, list[Post]]], s: dict, warnings: list[str]) -> list[dict]:
     style = s.get("item_style") if s.get("item_style") in prompts.BODY_RULES else "bullets"
     body_rule, body_json = prompts.BODY_RULES[style]
+    body_rule = body_rule.replace("{words}", str(int(s.get("words_per_story") or 15)))
     system = prompts.WRITE_SYSTEM.format(language=s.get("language") or "English", body_rule=body_rule, body_json=body_json,
                                          words=int(s.get("words_per_story") or 35),
                                          user_prompt=(s.get("writing_prompt") or "").strip() or "(none)")
