@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import aclosing
 import calendar
 import hashlib
@@ -187,6 +188,8 @@ def _tweet_text(t) -> str:
 
 async def _fetch_x(sources: list[dict], cookies: dict, since: datetime, limit: int, skip_retweets: bool,
                    include_replies: bool) -> tuple[list[Post], dict[int, str]]:
+    # Browser-like TLS fingerprint (curl_cffi): X rejects the plain Python one from data-centre servers.
+    os.environ.setdefault("TWS_HTTP_BACKEND", "curl")
     from twscrape import API
 
     db = Path(tempfile.mkdtemp()) / "accounts.db"
