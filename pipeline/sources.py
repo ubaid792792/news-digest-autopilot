@@ -188,9 +188,12 @@ def _tweet_text(t) -> str:
 
 async def _fetch_x(sources: list[dict], cookies: dict, since: datetime, limit: int, skip_retweets: bool,
                    include_replies: bool) -> tuple[list[Post], dict[int, str]]:
-    # Browser-like TLS fingerprint (curl_cffi): X rejects the plain Python one from data-centre servers.
-    os.environ.setdefault("TWS_HTTP_BACKEND", "curl")
     from twscrape import API
+    from twscrape.logger import logger as tw_logger
+
+    # twscrape only logs why X refused a request; keep that text so the dashboard can show it.
+    last_err: list[str] = []
+    tw_logger.add(lambda m: last_err.append(str(m)) if "Err:" in str(m) else None, level="WARNING")
 
     db = Path(tempfile.mkdtemp()) / "accounts.db"
     # Rate limits: wait up to 10 minutes for the account to free up; a dead login raises at once.
@@ -237,6 +240,14 @@ async def _fetch_x(sources: list[dict], cookies: dict, since: datetime, limit: i
                       break
         except Exception as exc:  # noqa: BLE001
             msg = str(exc) or exc.__class__.__name__
+            blocked = next((m for m in reversed(last_err) if "HttpStatusError 403" in m), None)
+            if blocked:
+                # X answered 403 to this server. Further profiles would get the same answer, so stop here.
+                why = ("X refused the request (HTTP 403). X blocks requests that come from cloud servers such as GitHub Actions, "
+                       "even with valid cookies.")
+                for rest in sources[sources.index(src):]:
+                    errors[rest["id"]] = why
+                break
             if "No account available" in msg or "NoAccount" in exc.__class__.__name__:
                 accounts = await api.pool.get_all()
                 if not any(a.active for a in accounts):

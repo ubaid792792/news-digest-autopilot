@@ -805,19 +805,6 @@ async function pipelineRoute(request, env, ctx, path, method, url) {
     }
     return json({ ok: true });
   }
-  if (path === "/pipeline/x-probe" && method === "GET") {
-    const s = await getSettings(env);
-    const cookie = `auth_token=${s.x_auth_token}; ct0=${s.x_ct0}`;
-    const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
-    const out = {};
-    for (const u of ["https://x.com/", "https://x.com/home", "https://x.com/MarioNawfal", "https://abs.twimg.com/responsive-web/client-web/main.js"]) {
-      try {
-        const r = await fetch(u, { headers: { "user-agent": ua, cookie }, redirect: "manual" });
-        out[u] = { status: r.status, type: r.headers.get("content-type"), cf: r.headers.get("cf-ray") ? "cf" : "", head: (await r.text()).slice(0, 120) };
-      } catch (e) { out[u] = { error: String(e).slice(0, 100) }; }
-    }
-    return json(out);
-  }
   if (path === "/pipeline/x-config" && method === "GET") {
     const s = await getSettings(env);
     const sources = await env.DB.prepare("SELECT id, kind, url, handle, name FROM sources WHERE kind = 'x' ORDER BY id").all();
