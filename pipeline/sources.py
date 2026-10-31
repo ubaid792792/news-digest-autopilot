@@ -279,4 +279,6 @@ def fetch_x(sources: list[dict], cookies: dict | None, since: datetime, s: dict)
         return [], {src["id"]: msg for src in sources}, {"ok": False, "message": msg}
     ok_sources = len(sources) - len(errors)
     status = {"ok": ok_sources > 0, "message": f"Read {ok_sources} of {len(sources)} X profiles ({len(posts)} posts)."}
+    if ok_sources == 0 and errors:
+        status["message"] = next(iter(errors.values()))
     return posts, errors, status
