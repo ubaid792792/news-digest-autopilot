@@ -6,7 +6,7 @@ on:
       mode:
         description: "live = digest is emailed at its delivery time, preview = dashboard only"
         type: choice
-        options: [preview, live]
+        options: [preview, live, xtest]
         default: preview
       run_id:
         description: "Run id from the dashboard (leave empty for manual runs)"

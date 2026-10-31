@@ -91,18 +91,58 @@ def collect(cfg: dict, worker: WorkerAPI, since: datetime) -> tuple[list[Post], 
     return found, list(status.values()), warnings, x_status
 
 
+def x_test(worker: WorkerAPI, run_id: str, trigger: str, gh_url: str) -> int:
+    """Check the saved X cookies against every X profile in Sources and report each one's status."""
+    worker.start_run(run_id, "", "xtest", trigger, gh_url)
+    try:
+        cfg = worker.x_config()
+        ck = cfg.get("x_cookies")
+        if ck:
+            mask(ck.get("auth_token", ""), ck.get("ct0", ""))
+        sources = cfg.get("sources", [])
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        s = {**cfg["settings"], "max_posts_per_source": 15}
+        posts, errors, status = fetch_x(sources, ck, since, s)
+        results = []
+        for src in sources:
+            n = sum(1 for p in posts if p.source_id == src["id"])
+            err = errors.get(src["id"])
+            results.append({"id": src["id"], "error": err, "count": n,
+                            "message": err or (f"Working: {n} posts in the last 24 hours" if n else "Working: no posts in the last 24 hours")})
+            log.info("x %s: %s", src["name"], results[-1]["message"])
+        ok = sum(1 for r in results if not r["error"])
+        if status is None:
+            status = {"ok": None, "message": "No X profiles in Sources to test."}
+        elif status.get("ok"):
+            status = {"ok": True, "message": f"Working: {ok} of {len(results)} X profiles read fine."}
+        worker.x_report({"x_status": status, "results": results})
+        summary = status["message"]
+        worker.finish_run(run_id, "done", summary, LOG_BUFFER.getvalue())
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        log.exception("X test failed")
+        try:
+            worker.x_report({"x_status": {"ok": False, "message": f"X test failed: {str(exc)[:200]}"}, "results": []})
+            worker.finish_run(run_id, "error", str(exc)[:300], LOG_BUFFER.getvalue())
+        except Exception:  # noqa: BLE001
+            pass
+        return 1
+
+
 def main() -> int:
     mode = os.environ.get("MODE") or "preview"
     run_id = os.environ.get("RUN_ID") or uuid.uuid4().hex[:12]
     digest_id = os.environ.get("DIGEST_ID") or ""
     trigger = os.environ.get("TRIGGER") or "manual"
     worker = WorkerAPI(os.environ["WORKER_URL"], os.environ["PIPELINE_SECRET"])
-    if not digest_id:
-        digest_id = worker.new_preview_digest()
-        mode = "preview"
     gh_url = ""
     if os.environ.get("GITHUB_RUN_ID"):
         gh_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    if mode == "xtest":
+        return x_test(worker, run_id, trigger, gh_url)
+    if not digest_id:
+        digest_id = worker.new_preview_digest()
+        mode = "preview"
     worker.start_run(run_id, digest_id, mode, trigger, gh_url)
     try:
         cfg = worker.config(digest_id)

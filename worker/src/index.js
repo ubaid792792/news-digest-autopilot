@@ -315,7 +315,7 @@ async function dispatch(env, { mode, digestId, trigger }) {
   if (!env.GH_TOKEN || !env.GH_REPO) throw new HttpError(500, "GitHub is not configured on the Worker");
   const runId = randomId();
   await env.DB.prepare("INSERT INTO runs (id, digest_id, started_at, mode, trigger, status) VALUES (?, ?, ?, ?, ?, 'dispatched')")
-    .bind(runId, digestId, nowIso(), mode, trigger)
+    .bind(runId, digestId || null, nowIso(), mode, trigger)
     .run();
   const res = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/${env.GH_WORKFLOW || "digest.yml"}/dispatches`, {
     method: "POST",
@@ -326,7 +326,7 @@ async function dispatch(env, { mode, digestId, trigger }) {
       "user-agent": "news-digest-autopilot",
       "content-type": "application/json",
     },
-    body: JSON.stringify({ ref: env.GH_REF || "main", inputs: { mode, run_id: runId, digest_id: digestId, trigger } }),
+    body: JSON.stringify({ ref: env.GH_REF || "main", inputs: { mode, run_id: runId, digest_id: digestId || "", trigger } }),
   });
   if (res.status !== 204) {
     const text = (await res.text()).slice(0, 300);
@@ -805,6 +805,26 @@ async function pipelineRoute(request, env, ctx, path, method, url) {
     }
     return json({ ok: true });
   }
+  if (path === "/pipeline/x-config" && method === "GET") {
+    const s = await getSettings(env);
+    const sources = await env.DB.prepare("SELECT id, kind, url, handle, name FROM sources WHERE kind = 'x' ORDER BY id").all();
+    return json({
+      settings: publicSettings(s),
+      sources: sources.results,
+      x_cookies: s.x_auth_token && s.x_ct0 ? { auth_token: s.x_auth_token, ct0: s.x_ct0 } : null,
+    });
+  }
+  if (path === "/pipeline/x-report" && method === "POST") {
+    const b = await body(request);
+    const stmts = [];
+    for (const r of (b.results || []).slice(0, 200)) {
+      stmts.push(env.DB.prepare("UPDATE sources SET last_fetched_at = ?, last_error = ?, last_count = ? WHERE id = ?")
+        .bind(nowIso(), r.error || null, r.count || 0, r.id));
+    }
+    if (stmts.length) await env.DB.batch(stmts);
+    if (b.x_status) await saveSettings(env, { x_status: { ...b.x_status, at: nowIso() } });
+    return json({ ok: true });
+  }
   if (path === "/pipeline/runs" && method === "POST") {
     const b = await body(request);
     const id = String(b.id || randomId()).slice(0, 32);
@@ -830,6 +850,33 @@ async function pipelineRoute(request, env, ctx, path, method, url) {
 }
 
 const SOURCE_KINDS = ["rss", "facebook", "x", "instagram"];
+
+// Accepts a Cookie-Editor / browser-extension JSON export, a "Cookie:" header line, name<TAB>value rows
+// copied from the browser's cookie table, or the two bare values on separate lines.
+function parseXCookies(text) {
+  let auth = "";
+  let ct0 = "";
+  const clean = (v) => String(v || "").trim().replace(/^["']|["']$/g, "");
+  try {
+    const parsed = JSON.parse(text);
+    const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.cookies) ? parsed.cookies : [];
+    for (const c of list) {
+      if (c?.name === "auth_token") auth = clean(c.value);
+      if (c?.name === "ct0") ct0 = clean(c.value);
+    }
+  } catch { /* not JSON */ }
+  auth = auth || clean((text.match(/auth_token["']?\s*(?:=|:|\t)\s*["']?([A-Za-z0-9]{30,64})/) || [])[1]);
+  ct0 = ct0 || clean((text.match(/\bct0["']?\s*(?:=|:|\t)\s*["']?([A-Za-z0-9]{32,200})/) || [])[1]);
+  if (!auth || !ct0) {
+    const bare = text.split(/[\s,;]+/).map(clean).filter((v) => /^[A-Za-z0-9]{30,200}$/.test(v));
+    if (bare.length === 2 && !/auth_token|ct0/.test(text)) {
+      const [a, b] = bare[0].length <= bare[1].length ? bare : [bare[1], bare[0]];
+      auth = auth || a;
+      ct0 = ct0 || b;
+    }
+  }
+  return { auth, ct0 };
+}
 
 async function panelRoute(request, env, ctx, path, method) {
   let m;
@@ -1017,18 +1064,24 @@ async function panelRoute(request, env, ctx, path, method) {
   }
   if (path === "/api/x-cookies" && method === "POST") {
     const b = await body(request);
-    let auth = String(b.auth_token || "").trim();
-    let ct0 = String(b.ct0 || "").trim();
-    // Also accept a whole pasted cookie header.
-    const pasted = String(b.cookie || "");
-    if (pasted) {
-      auth = (pasted.match(/auth_token=([a-f0-9]+)/i) || [])[1] || auth;
-      ct0 = (pasted.match(/ct0=([a-f0-9]+)/i) || [])[1] || ct0;
+    let { auth, ct0 } = parseXCookies(String(b.cookie || ""));
+    auth = auth || String(b.auth_token || "").trim();
+    ct0 = ct0 || String(b.ct0 || "").trim();
+    if (!auth || !ct0) {
+      throw new HttpError(400, `Could not find ${!auth && !ct0 ? "auth_token and ct0" : !auth ? "auth_token" : "ct0"} in what you pasted. ` +
+        "Paste the Cookie-Editor export (Export > JSON), or the line auth_token=...; ct0=...");
     }
-    if (!/^[a-f0-9]{30,64}$/i.test(auth)) throw new HttpError(400, "auth_token should be about 40 letters and numbers (0-9, a-f)");
-    if (!/^[a-f0-9]{32,200}$/i.test(ct0)) throw new HttpError(400, "ct0 should be a long string of letters and numbers (0-9, a-f)");
-    await saveSettings(env, { x_auth_token: auth, x_ct0: ct0, x_status: { ok: null, message: "Saved. Checked on the next collection run.", at: nowIso() } });
+    await saveSettings(env, { x_auth_token: auth, x_ct0: ct0, x_status: { ok: null, message: "Saved. Testing from GitHub...", at: nowIso() } });
     return json({ ok: true });
+  }
+  if (path === "/api/x-test" && method === "POST") {
+    const s = await getSettings(env);
+    if (!s.x_auth_token || !s.x_ct0) throw new HttpError(400, "Save the X cookies first.");
+    const busy = await env.DB.prepare("SELECT COUNT(*) AS n FROM runs WHERE mode = 'xtest' AND status IN ('dispatched','running') AND started_at > ?")
+      .bind(isoAt(Date.now() - 20 * 60000)).first();
+    if (busy?.n) throw new HttpError(409, "An X test is already running. Wait for it to finish.");
+    await saveSettings(env, { x_status: { ok: null, message: "Testing from GitHub (about 1-3 minutes)...", at: nowIso() } });
+    return json({ ok: true, run_id: await dispatch(env, { mode: "xtest", digestId: "", trigger: "dashboard" }) });
   }
   if (path === "/api/x-cookies" && method === "DELETE") {
     await saveSettings(env, { x_auth_token: null, x_ct0: null, x_status: null });

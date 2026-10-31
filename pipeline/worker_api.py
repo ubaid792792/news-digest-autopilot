@@ -35,6 +35,12 @@ class WorkerAPI:
     def config(self, digest_id: str) -> dict:
         return self._call("GET", "/pipeline/config", params={"digest_id": digest_id})
 
+    def x_config(self) -> dict:
+        return self._call("GET", "/pipeline/x-config")
+
+    def x_report(self, payload: dict) -> None:
+        self._call("POST", "/pipeline/x-report", json=payload)
+
     def new_preview_digest(self) -> str:
         return self._call("POST", "/pipeline/digests", json={})["id"]
 

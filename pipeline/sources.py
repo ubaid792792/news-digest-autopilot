@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 import calendar
 import hashlib
 import html
@@ -205,29 +206,32 @@ async def _fetch_x(sources: list[dict], cookies: dict, since: datetime, limit: i
             older = 0
             count = 0
             timeline = api.user_tweets_and_replies(user.id, limit=limit * 2) if include_replies else api.user_tweets(user.id, limit=limit * 2)
-            async for t in timeline:
-                posted = t.date.astimezone(timezone.utc) if t.date else None
-                if posted and posted < since:
-                    older += 1  # a pinned post can be old; stop after a few old ones in a row
-                    if older >= 4:
-                        break
-                    continue
-                older = 0
-                if t.user and t.user.id != user.id:
-                    continue
-                if skip_retweets and t.retweetedTweet:
-                    continue
-                if not include_replies and t.inReplyToTweetId and t.inReplyToUser and t.inReplyToUser.id != user.id:
-                    continue
-                video_url, seconds = _best_video(t.media)
-                text = _tweet_text(t)
-                text = re.sub(r"\s*https://t\.co/\w+\s*$", "", text).strip() or text
-                posts.append(Post(id=f"x:{t.id}", source_id=src["id"], source_name=src.get("name") or f"@{handle}",
-                                  kind="x", url=t.url, posted_at=posted, title=first_sentence(text) or "X video",
-                                  text=text[:4000], video_url=video_url, video_seconds=seconds))
-                count += 1
-                if count >= limit:
-                    break
+            # aclosing releases the X session when we stop early; otherwise it stays locked and every
+            # following profile is reported as "rate limited".
+            async with aclosing(timeline) as stream:
+                async for t in stream:
+                  posted = t.date.astimezone(timezone.utc) if t.date else None
+                  if posted and posted < since:
+                      older += 1  # a pinned post can be old; stop after a few old ones in a row
+                      if older >= 4:
+                          break
+                      continue
+                  older = 0
+                  if t.user and t.user.id != user.id:
+                      continue
+                  if skip_retweets and t.retweetedTweet:
+                      continue
+                  if not include_replies and t.inReplyToTweetId and t.inReplyToUser and t.inReplyToUser.id != user.id:
+                      continue
+                  video_url, seconds = _best_video(t.media)
+                  text = _tweet_text(t)
+                  text = re.sub(r"\s*https://t\.co/\w+\s*$", "", text).strip() or text
+                  posts.append(Post(id=f"x:{t.id}", source_id=src["id"], source_name=src.get("name") or f"@{handle}",
+                                    kind="x", url=t.url, posted_at=posted, title=first_sentence(text) or "X video",
+                                    text=text[:4000], video_url=video_url, video_seconds=seconds))
+                  count += 1
+                  if count >= limit:
+                      break
         except Exception as exc:  # noqa: BLE001
             msg = str(exc) or exc.__class__.__name__
             if "No account available" in msg or "NoAccount" in exc.__class__.__name__:

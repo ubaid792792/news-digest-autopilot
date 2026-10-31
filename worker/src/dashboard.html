@@ -260,14 +260,14 @@
     <div class="card">
       <h2>X (Twitter) reading <span class="pill" id="xPill"></span></h2>
       <p class="hint" id="xStatus"></p>
-      <p class="hint">Use a spare X account, never your main one. In a browser where that account is logged in on x.com, open
-        Developer tools &rarr; Application (Storage) &rarr; Cookies &rarr; https://x.com and copy the values of <b>auth_token</b> and <b>ct0</b>.
-        They are stored on the server and never shown again. Replace them if X logs the account out.</p>
-      <div class="row">
-        <div><label for="xAuth">auth_token</label><input type="password" id="xAuth" autocomplete="off"></div>
-        <div><label for="xCt0">ct0</label><input type="password" id="xCt0" autocomplete="off"></div>
-      </div>
-      <div class="actions"><button class="btn primary" id="xSave">Save X cookies</button><button class="btn danger" id="xDelete">Remove</button></div>
+      <p class="hint"><b>Easiest way (about 1 minute):</b> use a spare X account, never your main one. Log in to x.com with it in a browser that has the free
+        <b>Cookie-Editor</b> extension, open the extension on x.com, press <b>Export &rarr; JSON</b> and paste it below (paste it as it is).
+        Without the extension you can instead paste <i>auth_token=...; ct0=...</i>. Then press <b>Save &amp; test</b>: it tests the cookies from GitHub and
+        shows the result for every X profile in Sources. Cookies are stored on the server and never shown again. Replace them if X logs the account out.</p>
+      <label for="xPaste">Paste cookies here</label>
+      <textarea id="xPaste" autocomplete="off" spellcheck="false" style="min-height:90px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px" placeholder='[{"name":"auth_token","value":"..."},{"name":"ct0","value":"..."}]   or   auth_token=...; ct0=...'></textarea>
+      <div class="actions"><button class="btn primary" id="xSave">Save &amp; test</button><button class="btn" id="xTest">Test again</button><button class="btn danger" id="xDelete">Remove</button></div>
+      <div id="xProfiles" style="margin-top:10px"></div>
     </div>
     <div class="card">
       <h2>Instagram reading <span class="pill" id="igPill"></span></h2>
@@ -360,7 +360,8 @@ async function load() {
   S = await api("/api/state");
   renderHeader(); renderDigests(); renderSources(); renderResearch(); renderTopics(); renderSettings(); renderSlots(); renderConnections(); renderRuns();
   clearTimeout(load.t);
-  if (S.digests.some((d) => d.status === "collecting")) load.t = setTimeout(() => load().catch(() => {}), 20000);
+  const testing = S.config.x_status && S.config.x_status.ok === null && /Testing/.test(S.config.x_status.message || "") && Date.now() - Date.parse(S.config.x_status.at) < 20 * 60000;
+  if (S.digests.some((d) => d.status === "collecting") || testing) load.t = setTimeout(() => load().catch(() => {}), testing ? 8000 : 20000);
 }
 
 function renderHeader() {
@@ -455,6 +456,7 @@ $("#sourceList").addEventListener("click", async (e) => {
   const a = el.dataset.act;
   if (a === "toggle") return act(null, () => api(`/api/sources/${id}`, { method: "PATCH", body: { enabled: el.checked } }), el.checked ? "Source on" : "Source paused");
   if (a === "del") { if (confirm(`Delete ${src.name}?`)) act(el, () => api(`/api/sources/${id}`, { method: "DELETE" }), "Deleted"); return; }
+  if (a === "test" && src.kind === "x") { $('#tabs button[data-tab="connections"]').click(); return runXTest(el); }
   if (a === "test") {
     el.disabled = true;
     try { const r = await api(`/api/sources/${id}/test`, { method: "POST", body: {} }); toast(r.message, !r.ok); } catch (err) { toast(err.message, true); }
@@ -586,6 +588,13 @@ function renderConnections() {
   else if (xs && xs.ok === false) { xPill.className = "pill bad"; xPill.textContent = "Problem"; }
   else if (xs && xs.ok) { xPill.className = "pill ok"; xPill.textContent = "Working"; }
   else { xPill.className = "pill blue"; xPill.textContent = "Saved"; }
+  const xp = S.sources.filter((x) => x.kind === "x");
+  $("#xProfiles").innerHTML = xp.length ? `<h3 style="margin-top:4px">X profiles</h3><div class="list">${xp.map((x) => {
+    const ok = x.last_fetched_at && !x.last_error;
+    return `<div class="item"><div class="main"><div class="name">${esc(x.name)} <span class="meta">${esc(x.url.replace("https://x.com/", "@"))}</span>${x.enabled ? "" : ' <span class="pill">off</span>'}</div>
+      <div class="${x.last_error ? "err" : "meta"}">${x.last_fetched_at ? esc(x.last_error || `${x.last_count} posts · ${ago(x.last_fetched_at)}`) : "Not tested yet"}</div></div>
+      <span class="pill ${x.last_error ? "bad" : ok ? "ok" : ""}">${x.last_error ? "Problem" : ok ? "Working" : "Unknown"}</span></div>`;
+  }).join("")}</div>` : "";
   $("#xStatus").textContent = xs ? `${xs.message || ""}${xs.at ? ` (${ago(xs.at)})` : ""}` : (c.x_cookies ? "" : "X profiles are skipped until cookies are saved.");
   const ig = c.instagram;
   $("#igPill").className = ig ? "pill ok" : "pill warn"; $("#igPill").textContent = ig ? "Connected" : "Not connected";
@@ -616,10 +625,22 @@ $("#runBtn").addEventListener("click", (e) => { if (confirm("Collect now and ema
 $("#previewBtn").addEventListener("click", (e) => act(e.target, () => api("/api/run", { body: { preview: true } }), "Preview started (no email). It appears under Digests in about 5-15 minutes."));
 
 // ---------- connections + account ----------
-$("#xSave").addEventListener("click", (e) => act(e.target, async () => {
-  const out = await api("/api/x-cookies", { body: { auth_token: $("#xAuth").value, ct0: $("#xCt0").value } });
-  $("#xAuth").value = $("#xCt0").value = ""; return out;
-}, "X cookies saved"));
+async function runXTest(btn) {
+  if (btn) btn.disabled = true;
+  try { await api("/api/x-test", { method: "POST", body: {} }); toast("Testing the X connection from GitHub. Results appear here in 1-3 minutes."); await load(); }
+  catch (e) { toast(e.message, true); }
+  finally { if (btn) btn.disabled = false; }
+}
+$("#xSave").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try {
+    await api("/api/x-cookies", { body: { cookie: $("#xPaste").value } });
+    $("#xPaste").value = "";
+    await runXTest(null);
+  } catch (err) { toast(err.message, true); }
+  finally { e.target.disabled = false; }
+});
+$("#xTest").addEventListener("click", (e) => runXTest(e.target));
 $("#xDelete").addEventListener("click", (e) => { if (confirm("Remove the X cookies? X profiles will be skipped.")) act(e.target, () => api("/api/x-cookies", { method: "DELETE" }), "Removed"); });
 $("#fbSecretSave").addEventListener("click", (e) => act(e.target, async () => { const o = await api("/api/app-secret", { body: { secret: $("#fbSecret").value } }); $("#fbSecret").value = ""; return o; }, "Saved"));
 $("#testEmail").addEventListener("click", (e) => act(e.target, async () => {
